@@ -1,0 +1,486 @@
+import json
+from uuid import uuid4
+
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langgraph.types import interrupt
+from .parsers import (
+    ClarificationDecision,
+    ResearchPlan,
+    ResearchToolSelection,
+    ResponseEvaluation,
+    ScopeCategory,
+    ScopeDecision,
+    llm_response_fixing_parser,
+)
+from .prompts import (
+    CLARIFY_QUERY_INPUT_TEMPLATE,
+    CLARIFY_QUERY_SYSTEM_PROMPT,
+    CONVERSATION_CONTEXT_TEMPLATE,
+    EVALUATE_RESPONSE_SYSTEM_PROMPT,
+    HITL_CLARIFICATION_QUESTION,
+    OUT_OF_SCOPE_INPUT_TEMPLATE,
+    OUT_OF_SCOPE_RESPONSE_SYSTEM_PROMPT,
+    PLANNING_INPUT_TEMPLATE,
+    PLANNING_SYSTEM_PROMPT,
+    EXECUTE_TASK_INPUT_TEMPLATE,
+    EXECUTE_TASK_SYSTEM_PROMPT,
+    EVALUATION_INPUT_TEMPLATE,
+    SCOPE_GATE_SYSTEM_PROMPT,
+    SINGLE_QUERY_INPUT_TEMPLATE,
+    UNCLEAR_QUERY_INPUT_TEMPLATE,
+    UNCLEAR_QUERY_RESPONSE_SYSTEM_PROMPT,
+    AVAILABLE_TOOLS_TEMPLATE,
+)
+from .node_helpers import (
+    append_recent_conversation_turn,
+    format_recent_messages,
+    generate_draft_response,
+    invoke_llm,
+    merge_sources,
+    normalize_tool_arguments,
+    tool_content_to_records,
+)
+from .utils import log, log_function
+
+
+class ResearchNodes:
+    self.val = 5
+    
+    @log_function
+    def scope_gate(self, state):
+        """Classify the request and route unrelated requests away from research."""
+        query = str(state.get("query", "")).strip()
+        parser = llm_response_fixing_parser(ScopeDecision, self.llm)
+        input_message = f"User request:\n{query}"
+        try:
+            decision = parser.parse(
+                invoke_llm(
+                    self.llm,
+                    "scope_gate_llm",
+                    [
+                        SystemMessage(content=SCOPE_GATE_SYSTEM_PROMPT),
+                        HumanMessage(
+                            content=f"{input_message}\n\n{parser.get_format_instructions()}"
+                        ),
+                    ],
+                ).content
+            )
+            category = decision.category
+            return {"scope_category": category.value}
+        except Exception as exc:
+            log(f"scope_classification.failed_using_in_scope | selected_scope=in_scope | error={exc!r}")
+            return {"scope_category": ScopeCategory.IN_SCOPE.value}
+
+    @log_function
+    def out_of_scope_response(self, state):
+        """Explain the research scope and guide an unrelated request toward a research question."""
+        memory = self.session_memory.context()
+        recent_conversation = format_recent_messages(state.get("messages", []))
+        input_message = OUT_OF_SCOPE_INPUT_TEMPLATE.format(
+            query=state.get("query", ""),
+        ) + (
+            f"\n\nRemembered user information: {memory.get('user_info', [])}"
+            f"\nRemembered session context: {memory.get('session_context', [])}"
+            f"\n\nOlder summarized context: {state.get('message_summary', '') or 'None'}"
+            f"\n\nRecent conversation: {recent_conversation}"
+        )
+        response = invoke_llm(
+            self.llm,
+            "out_of_scope_response_llm",
+            [
+                SystemMessage(content=OUT_OF_SCOPE_RESPONSE_SYSTEM_PROMPT),
+                HumanMessage(content=input_message),
+            ],
+        )
+        return {
+            "draft_response": str(response.content).strip(),
+            "sources": [],
+            "needs_hitl": False,
+        }
+
+    @log_function
+    def clarify_query(self, state):
+        """Decide whether clarification is needed and store a clean final query."""
+        parser = llm_response_fixing_parser(ClarificationDecision, self.llm)
+        query = state.get("query", "")
+        hitl_answer = str(state.get("hitl_answer", "")).strip()
+        conversation = format_recent_messages(state.get("messages", []))
+        if hitl_answer:
+            input_message = CLARIFY_QUERY_INPUT_TEMPLATE.format(
+                query=query, clarification_answer=hitl_answer
+            )
+            input_message = f"{input_message}\n\n{CONVERSATION_CONTEXT_TEMPLATE.format(conversation=conversation)}"
+            try:
+                decision = parser.parse(
+                    invoke_llm(
+                        self.llm,
+                        "clarified_query_llm",
+                        [
+                            SystemMessage(content=CLARIFY_QUERY_SYSTEM_PROMPT),
+                            HumanMessage(
+                                content=f"{input_message}\n\n{parser.get_format_instructions()}"
+                            ),
+                        ],
+                    ).content
+                )
+                final_query = decision.final_query.strip() or f"{query} {hitl_answer}"
+            except Exception as exc:
+                log(f"clarified_query.generation_failed_using_original_and_answer | error={exc!r}")
+                final_query = f"{query} Additional context: {hitl_answer}"
+            return {
+                "query": final_query,
+                "hitl_answer": "",
+                "needs_hitl": False,
+            }
+
+        input_message = (
+            f"{SINGLE_QUERY_INPUT_TEMPLATE.format(query=query)}\n\n"
+            f"{CONVERSATION_CONTEXT_TEMPLATE.format(conversation=conversation)}"
+        )
+        try:
+            decision = parser.parse(
+                invoke_llm(
+                    self.llm,
+                    "clarify_query_llm",
+                    [
+                        SystemMessage(content=CLARIFY_QUERY_SYSTEM_PROMPT),
+                        HumanMessage(
+                            content=f"{input_message}\n\n{parser.get_format_instructions()}"
+                        ),
+                    ],
+                ).content
+            )
+        except Exception as exc:
+            log(f"clarification_decision.failed_using_original_query | error={exc!r}")
+            decision = ClarificationDecision(
+                needs_clarification=False,
+                question="",
+                final_query=query,
+            )
+
+        if not decision.needs_clarification:
+            return {
+                "query": decision.final_query.strip() or query,
+                "needs_hitl": False,
+            }
+
+        question = decision.question.strip() or HITL_CLARIFICATION_QUESTION
+        answer = interrupt({"kind": "research_scope", "question": question})
+        answer_text = "" if answer is None else str(answer).strip()
+        if answer_text:
+            return {"hitl_answer": answer_text, "needs_hitl": False}
+
+        memory = self.session_memory.context()
+        unclear_input = (
+            UNCLEAR_QUERY_INPUT_TEMPLATE.format(query=query)
+            + f"\n\nUser information: {memory.get('user_info', [])}"
+            + f"\nSession context: {memory.get('session_context', [])}"
+            + f"\nOlder summarized context: {state.get('message_summary', '') or 'None'}"
+            + f"\nRecent conversation: {conversation}"
+        )
+        response = invoke_llm(
+            self.llm,
+            "unclear_query_response_llm",
+            [
+                SystemMessage(content=UNCLEAR_QUERY_RESPONSE_SYSTEM_PROMPT),
+                HumanMessage(content=unclear_input),
+            ],
+        )
+        return {
+            "draft_response": str(response.content).strip(),
+            "sources": [],
+            "needs_hitl": False,
+        }
+
+    @log_function
+    def plan(self, state):
+        """Create the next evidence-gathering plan from the query and current evaluation."""
+        parser = llm_response_fixing_parser(ResearchPlan, self.llm)
+        memory = self.session_memory.context()
+        message_summary = state.get("message_summary", "")
+        input_message = PLANNING_INPUT_TEMPLATE.format(
+            query=state["query"],
+            clarification=state.get("hitl_answer", "none"),
+            draft=state.get("draft_response", "No draft exists yet."),
+            evaluation=state.get("evaluation", "No evaluation exists yet."),
+            user_info=memory.get("user_info", []),
+            session_context=memory.get("session_context", []),
+            message_summary=message_summary,
+            recent_conversation=format_recent_messages(state.get("messages", [])),
+        )
+        try:
+            result = invoke_llm(
+                self.llm,
+                "planner_llm",
+                [
+                    SystemMessage(content=PLANNING_SYSTEM_PROMPT),
+                    HumanMessage(
+                        content=f"{input_message}\n\n{parser.get_format_instructions()}"
+                    ),
+                ],
+            )
+            plan = parser.parse(result.content)
+            tasks = [task.strip() for task in plan.tasks if task and task.strip()][:5]
+            if not tasks:
+                tasks = [state["query"]]
+            log(f"research_plan.created | task_count={len(tasks)}")
+            for index, task in enumerate(tasks, start=1):
+                log(f"research_plan.task_created | task_number={index} | task={task!r}")
+            return {"tasks": tasks, "current_task_index": 0, "tool_messages": []}
+        except Exception as exc:
+            log(f"research_plan.generation_failed_using_original_query | error={exc!r}")
+            return {
+                "tasks": [state["query"]],
+                "current_task_index": 0,
+                "tool_messages": [],
+            }
+
+    @log_function
+    def execute_task(self, state):
+        """Select and run the tools needed for the current research task."""
+        tasks = state.get("tasks", [state["query"]])
+        task_index = state.get("current_task_index", 0)
+        task = tasks[task_index] if task_index < len(tasks) else state["query"]
+        memory = self.session_memory.context()
+        message_summary = state.get("message_summary", "")
+        try:
+            stored_files = self.document_handler.list_files() if self.document_handler else []
+        except Exception as exc:
+            log(f"stored_documents.list_failed_continuing_without_file_names | error={exc!r}")
+            stored_files = []
+        input_message = EXECUTE_TASK_INPUT_TEMPLATE.format(
+            query=state["query"],
+            task=task,
+            user_info=memory.get("user_info", []),
+            session_context=memory.get("session_context", []),
+            message_summary=message_summary,
+            recent_conversation=format_recent_messages(state.get("messages", [])),
+            stored_documents="\n".join(f"- {file_name}" for file_name in stored_files) or "None",
+        )
+        available_tools = "\n".join(
+            f"- {tool.name}: {tool.description or 'No description provided.'}"
+            for tool in self.tools
+        )
+        parser = llm_response_fixing_parser(ResearchToolSelection, self.llm)
+        messages = [
+            SystemMessage(content=EXECUTE_TASK_SYSTEM_PROMPT),
+            HumanMessage(
+                content=(
+                    f"{input_message}\n\n"
+                    f"{AVAILABLE_TOOLS_TEMPLATE.format(tools=available_tools)}\n\n"
+                    f"{parser.get_format_instructions()}"
+                )
+            ),
+        ]
+        try:
+            selection_response = invoke_llm(self.llm, "execute_task_llm", messages)
+            raw_selection = getattr(selection_response, "content", selection_response)
+            try:
+                selection_payload = json.loads(raw_selection)
+            except (TypeError, json.JSONDecodeError):
+                selection_payload = raw_selection
+            if isinstance(selection_payload, list):
+                raw_selection = json.dumps({"tool_calls": selection_payload})
+            elif isinstance(selection_payload, dict):
+                raw_selection = json.dumps(selection_payload)
+            selection = parser.parse(
+                raw_selection
+            )
+            available_tool_names = {tool.name for tool in self.tools}
+            tool_calls = [
+                {
+                    "name": call.name,
+                    "args": call.arguments,
+                    "id": f"call_{uuid4().hex}",
+                    "type": "tool_call",
+                }
+                for call in selection.tool_calls
+                if call.name in available_tool_names
+            ]
+        except Exception as exc:
+            log(f"tool_selection.failed_continuing_without_tool_calls | error={exc!r}")
+            tool_calls = []
+        log(f"tool_selection.completed | selected_tool_count={len(tool_calls)}")
+        for call in tool_calls:
+            log(
+                f"tool_selection.tool_selected | tool_name={call.get('name')} | arguments={call.get('args')}"
+            )
+
+        tools_by_name = {tool.name: tool for tool in self.tools}
+        tool_records = []
+        for tool_call in tool_calls:
+            tool_name = tool_call.get("name", "unknown_tool")
+            tool = tools_by_name.get(tool_name)
+            try:
+                if tool is None:
+                    raise ValueError(f"Unknown research tool: {tool_name}")
+                arguments = normalize_tool_arguments(tool_name, tool_call.get("args", {}))
+                content = tool.invoke(arguments)
+                source_hint = (
+                    arguments.get("source_name")
+                    if tool_name == "read_stored_file"
+                    else tool_name
+                )
+                tool_records.extend(tool_content_to_records(content, source_hint))
+            except Exception as exc:
+                log(
+                    f"tool_execution.failed | tool_name={tool_name}"
+                    f" | error={exc!r}"
+                )
+                continue
+        return {
+            "tool_messages": state.get("tool_messages", [])
+            + tool_records,
+            "current_task_index": state.get("current_task_index", 0) + 1,
+        }
+
+    @log_function
+    def collect_informations(self, state):
+        """Separate tool content from source names, draft the answer, and merge the relevant sources."""
+        tool_records = state.get("tool_messages", [])
+        content_blocks = []
+        source_names = []
+        for response in tool_records:
+            if not isinstance(response, dict):
+                continue
+            content = str(response.get("content", "")).strip()
+            source = str(response.get("source", "")).strip()
+            if content:
+                content_blocks.append(content)
+            if source:
+                source_names.append(source)
+        log(
+            f"research_material.collected | source_count={len(source_names)} | content_block_count={len(content_blocks)}"
+        )
+        draft = generate_draft_response(
+            self.llm,
+            state,
+            content_blocks,
+            self.session_memory.context(),
+        )
+        sources = merge_sources(
+            self.llm,
+            state.get("sources", []),
+            source_names,
+            draft,
+        )
+        return {
+            "sources": sources,
+            "tool_messages": [],
+            "tasks": [],
+            "draft_response": draft,
+            "current_task_index": 0,
+        }
+
+    @log_function
+    def clean_state(self, state):
+        """Load the session conversation and clear transient graph data before a new run."""
+        query = state.get("query", "")
+
+        return {
+            "query": query,
+            "message_summary": state.get("message_summary", ""),
+            "scope_category": "",
+            "tasks": [],
+            "current_task_index": 0,
+            "tool_messages": [],
+            "sources": [],
+            "draft_response": "",
+            "evaluation": {},
+            "iterations": 0,
+            "final_response": "",
+            "hitl_answer": "",
+            "needs_hitl": False,
+        }
+
+    @log_function
+    def finalize_response(self, state):
+        """Persist the completed turn and set the final response from the accepted draft."""
+        final_response = state.get("draft_response", "No answer was produced.")
+        sources = state.get("sources", [])[:5]
+
+        try:
+            self.session_memory.update_from_query(state.get("query", ""), self.llm)
+        except Exception as exc:
+            log(f"session_memory.query_update_failed | error={exc!r}")
+        try:
+            self.session_memory.update_from_response(final_response, self.llm)
+        except Exception as exc:
+            log(f"session_memory.response_update_failed | error={exc!r}")
+
+        updated_state = {
+            **state,
+            "final_response": final_response,
+            "messages": list(state.get("messages", [])),
+            "tasks": [],
+            "current_task_index": 0,
+            "tool_messages": [],
+            "sources": sources,
+            "draft_response": "",
+            "evaluation": state.get("evaluation", {}),
+        }
+        try:
+            updated_state = append_recent_conversation_turn(
+                updated_state,
+                state.get("query", ""),
+                final_response,
+                self.llm,
+            )
+        except Exception as exc:
+            log(f"conversation_summary.update_failed_using_current_turn | error={exc!r}")
+            updated_state["messages"] = list(updated_state.get("messages", []))[-8:] + [
+                {"role": "user", "content": state.get("query", "")},
+                {"role": "assistant", "content": final_response},
+            ]
+        return updated_state
+
+    @log_function
+    def evaluate_response(self, state):
+        """Evaluate the draft and report whether further research is needed."""
+        parser = llm_response_fixing_parser(ResponseEvaluation, self.llm)
+        memory = self.session_memory.context()
+        message_summary = state.get("message_summary", "")
+        input_message = EVALUATION_INPUT_TEMPLATE.format(
+            query=state["query"],
+            draft=state.get("draft_response", ""),
+            user_info=memory.get("user_info", []),
+            session_context=memory.get("session_context", []),
+            message_summary=message_summary,
+            recent_conversation=format_recent_messages(state.get("messages", [])),
+        )
+        try:
+            review = parser.parse(
+                invoke_llm(
+                    self.llm,
+                    "evaluation_llm",
+                    [
+                        SystemMessage(content=EVALUATE_RESPONSE_SYSTEM_PROMPT),
+                        HumanMessage(
+                            content=f"{input_message}\n\n{parser.get_format_instructions()}"
+                        ),
+                    ],
+                ).content
+            )
+            log(
+                f"response_evaluation.completed | needs_improvement={review.needs_improvement}"
+                f" | improvement_scope_count={len(review.improvement_scopes)}"
+            )
+            return {
+                "evaluation": review.model_dump(),
+                "iterations": state.get("iterations", 0) + 1,
+                "tasks": [],
+                "current_task_index": 0,
+                "tool_messages": [],
+            }
+        except Exception:
+            return {
+                "evaluation": {
+                    "verdict": "Evaluation was unavailable.",
+                    "needs_improvement": False,
+                    "improvement_scopes": [],
+                },
+                "iterations": state.get("iterations", 0) + 1,
+                "tasks": [],
+                "current_task_index": 0,
+                "tool_messages": [],
+            }
