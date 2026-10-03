@@ -2,16 +2,6 @@ from tree_sitter import Parser
 from tree_sitter_language_pack import get_language
 from file_parsing.extractors.BaseParser import BaseParser
 
-"""
-    Extract meaningful Python code entities from a Tree-sitter syntax tree.
-
-    The extractor intentionally does NOT expose every Tree-sitter AST node.
-    It extracts structural/semantic entities that can later become graph
-    nodes in Neo4j.
-
-    The actual extraction methods are implemented as module-level functions
-    below to keep this class scope small and focused on the public API.
-"""
 
 class PythonParser(BaseParser):
     """
@@ -260,19 +250,9 @@ def extract_scope(extractor, node, source_code):
         # --------------------------------------------------------
         # Any other node
         #
-        # If this is a leaf node, keep it instead of losing it.
-        # Otherwise continue recursive extraction as before.
+        # Recurse because a meaningful construct can exist inside
+        # another syntax wrapper.
         # --------------------------------------------------------
-
-        if not child.children:
-            children.append({
-                "type": child.type,
-                "start_line": child.start_point[0] + 1,
-                "end_line": child.end_point[0] + 1,
-                "unmatched" : True,
-                "text": text(extractor, child, source_code),
-            })
-            continue
 
         nested = extract_scope(
             extractor,

@@ -1,0 +1,1869 @@
+{
+  "type": "file",
+  "children": [
+    {
+      "type": "import",
+      "start_line": 1,
+      "end_line": 1,
+      "text": "from tree_sitter import Parser"
+    },
+    {
+      "type": "import",
+      "start_line": 2,
+      "end_line": 2,
+      "text": "from tree_sitter_language_pack import get_language"
+    },
+    {
+      "type": "import",
+      "start_line": 3,
+      "end_line": 3,
+      "text": "from file_parsing.extractors.BaseParser import BaseParser"
+    },
+    {
+      "type": "class",
+      "name": "PythonParser",
+      "start_line": 17,
+      "end_line": 47,
+      "text": "class PythonParser(BaseParser):\r\n    \"\"\"\r\n    Extract meaningful Python code entities from a Tree-sitter syntax tree.\r\n\r\n    The extractor intentionally does NOT expose every Tree-sitter AST node.\r\n    It extracts structural/semantic entities that can later become graph\r\n    nodes in Neo4j.\r\n\r\n    The actual extraction methods are implemented as module-level functions\r\n    below to keep this class scope small and focused on the public API.\r\n    \"\"\"\r\n\r\n    def __init__(self):\r\n        self.language = get_language(\"python\")\r\n        self.parser = Parser(self.language)\r\n\r\n    def parse(self, source_code: bytes):\r\n        \"\"\"\r\n        Parse Python source code and return the extracted file scope.\r\n        \"\"\"\r\n\r\n        tree = self.parser.parse(source_code)\r\n\r\n        return {\r\n            \"type\": \"file\",\r\n            \"children\": extract_scope(\r\n                self,\r\n                tree.root_node,\r\n                source_code,\r\n            ),\r\n        }",
+      "children": [
+        {
+          "type": "function",
+          "name": "__init__",
+          "start_line": 29,
+          "end_line": 31,
+          "text": "def __init__(self):\r\n        self.language = get_language(\"python\")\r\n        self.parser = Parser(self.language)",
+          "children": [
+            {
+              "type": "assignment",
+              "start_line": 30,
+              "end_line": 30,
+              "text": "self.language = get_language(\"python\")"
+            },
+            {
+              "type": "assignment",
+              "start_line": 31,
+              "end_line": 31,
+              "text": "self.parser = Parser(self.language)"
+            }
+          ],
+          "parameters": "(self)"
+        },
+        {
+          "type": "function",
+          "name": "parse",
+          "start_line": 33,
+          "end_line": 47,
+          "text": "def parse(self, source_code: bytes):\r\n        \"\"\"\r\n        Parse Python source code and return the extracted file scope.\r\n        \"\"\"\r\n\r\n        tree = self.parser.parse(source_code)\r\n\r\n        return {\r\n            \"type\": \"file\",\r\n            \"children\": extract_scope(\r\n                self,\r\n                tree.root_node,\r\n                source_code,\r\n            ),\r\n        }",
+          "children": [
+            {
+              "type": "assignment",
+              "start_line": 38,
+              "end_line": 38,
+              "text": "tree = self.parser.parse(source_code)"
+            }
+          ],
+          "parameters": "(self, source_code: bytes)"
+        }
+      ],
+      "bases": [
+        "BaseParser"
+      ]
+    },
+    {
+      "type": "comment",
+      "start_line": 50,
+      "end_line": 50,
+      "text": "# ================================================================\r"
+    },
+    {
+      "type": "comment",
+      "start_line": 51,
+      "end_line": 51,
+      "text": "# SCOPE EXTRACTION\r"
+    },
+    {
+      "type": "comment",
+      "start_line": 52,
+      "end_line": 52,
+      "text": "# ================================================================\r"
+    },
+    {
+      "type": "function",
+      "name": "extract_scope",
+      "start_line": 55,
+      "end_line": 287,
+      "text": "def extract_scope(extractor, node, source_code):\r\n    \"\"\"\r\n    Extract meaningful nodes from a scope.\r\n\r\n    A scope can be:\r\n    - module\r\n    - class\r\n    - function\r\n    - if/else/elif body\r\n    - loop body\r\n    - try/except/finally body\r\n    - with body\r\n    - match/case body\r\n    \"\"\"\r\n\r\n    children = []\r\n\r\n    for child in node.children:\r\n\r\n        # --------------------------------------------------------\r\n        # Comments\r\n        # --------------------------------------------------------\r\n\r\n        if child.type == \"comment\":\r\n            children.append({\r\n                \"type\": \"comment\",\r\n                \"start_line\": child.start_point[0] + 1,\r\n                \"end_line\": child.end_point[0] + 1,\r\n                \"text\": text(extractor, child, source_code),\r\n            })\r\n\r\n            continue\r\n\r\n        # --------------------------------------------------------\r\n        # Imports\r\n        # --------------------------------------------------------\r\n\r\n        if child.type in {\r\n            \"import_statement\",\r\n            \"import_from_statement\",\r\n        }:\r\n            children.append(\r\n                extract_import(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )\r\n            continue\r\n\r\n        # --------------------------------------------------------\r\n        # Assignments\r\n        # --------------------------------------------------------\r\n\r\n        if child.type in {\r\n            \"assignment\",\r\n            \"augmented_assignment\",\r\n            \"named_expression\",\r\n            \"annotated_assignment\",\r\n        }:\r\n            children.append(\r\n                extract_assignment(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )\r\n            continue\r\n\r\n        # --------------------------------------------------------\r\n        # Decorated definitions\r\n        # --------------------------------------------------------\r\n\r\n        if child.type == \"decorated_definition\":\r\n            extracted = extract_decorated_definition(\r\n                extractor,\r\n                child,\r\n                source_code,\r\n            )\r\n\r\n            if extracted:\r\n                children.append(extracted)\r\n\r\n            continue\r\n\r\n        # --------------------------------------------------------\r\n        # Normal class\r\n        # --------------------------------------------------------\r\n\r\n        if child.type == \"class_definition\":\r\n            children.append(\r\n                extract_class(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )\r\n            continue\r\n\r\n        # --------------------------------------------------------\r\n        # Normal function\r\n        # --------------------------------------------------------\r\n\r\n        if child.type in {\r\n            \"function_definition\",\r\n            \"async_function_definition\",\r\n        }:\r\n            children.append(\r\n                extract_function(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )\r\n            continue\r\n\r\n        # --------------------------------------------------------\r\n        # IF / ELIF / ELSE\r\n        # --------------------------------------------------------\r\n\r\n        if child.type == \"if_statement\":\r\n            children.append(\r\n                extract_if(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )\r\n            continue\r\n\r\n        # --------------------------------------------------------\r\n        # FOR\r\n        # --------------------------------------------------------\r\n\r\n        if child.type in {\r\n            \"for_statement\",\r\n            \"async_for_statement\",\r\n        }:\r\n            children.append(\r\n                extract_for(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )\r\n            continue\r\n\r\n        # --------------------------------------------------------\r\n        # WHILE\r\n        # --------------------------------------------------------\r\n\r\n        if child.type == \"while_statement\":\r\n            children.append(\r\n                extract_while(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )\r\n            continue\r\n\r\n        # --------------------------------------------------------\r\n        # TRY / EXCEPT / FINALLY\r\n        # --------------------------------------------------------\r\n\r\n        if child.type == \"try_statement\":\r\n            children.append(\r\n                extract_try(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )\r\n            continue\r\n\r\n        # --------------------------------------------------------\r\n        # WITH\r\n        # --------------------------------------------------------\r\n\r\n        if child.type in {\r\n            \"with_statement\",\r\n            \"async_with_statement\",\r\n        }:\r\n            children.append(\r\n                extract_with(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )\r\n            continue\r\n\r\n        # --------------------------------------------------------\r\n        # MATCH / CASE\r\n        # --------------------------------------------------------\r\n\r\n        if child.type == \"match_statement\":\r\n            children.append(\r\n                extract_match(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )\r\n            continue\r\n\r\n        # --------------------------------------------------------\r\n        # Any other node\r\n        #\r\n        # If this is a leaf node, keep it instead of losing it.\r\n        # Otherwise continue recursive extraction as before.\r\n        # --------------------------------------------------------\r\n\r\n        if not child.children:\r\n            children.append({\r\n                \"type\": child.type,\r\n                \"start_line\": child.start_point[0] + 1,\r\n                \"end_line\": child.end_point[0] + 1,\r\n                \"unmatched\" : True,\r\n                \"text\": text(extractor, child, source_code),\r\n            })\r\n            continue\r\n\r\n        nested = extract_scope(\r\n            extractor,\r\n            child,\r\n            source_code,\r\n        )\r\n\r\n        if nested:\r\n            children.extend(nested)\r\n\r\n    return children",
+      "children": [
+        {
+          "type": "assignment",
+          "start_line": 70,
+          "end_line": 70,
+          "text": "children = []"
+        },
+        {
+          "type": "for",
+          "start_line": 72,
+          "end_line": 285,
+          "text": "for child in node.children:\r\n\r\n        # --------------------------------------------------------\r\n        # Comments\r\n        # --------------------------------------------------------\r\n\r\n        if child.type == \"comment\":\r\n            children.append({\r\n                \"type\": \"comment\",\r\n                \"start_line\": child.start_point[0] + 1,\r\n                \"end_line\": child.end_point[0] + 1,\r\n                \"text\": text(extractor, child, source_code),\r\n            })\r\n\r\n            continue\r\n\r\n        # --------------------------------------------------------\r\n        # Imports\r\n        # --------------------------------------------------------\r\n\r\n        if child.type in {\r\n            \"import_statement\",\r\n            \"import_from_statement\",\r\n        }:\r\n            children.append(\r\n                extract_import(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )\r\n            continue\r\n\r\n        # --------------------------------------------------------\r\n        # Assignments\r\n        # --------------------------------------------------------\r\n\r\n        if child.type in {\r\n            \"assignment\",\r\n            \"augmented_assignment\",\r\n            \"named_expression\",\r\n            \"annotated_assignment\",\r\n        }:\r\n            children.append(\r\n                extract_assignment(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )\r\n            continue\r\n\r\n        # --------------------------------------------------------\r\n        # Decorated definitions\r\n        # --------------------------------------------------------\r\n\r\n        if child.type == \"decorated_definition\":\r\n            extracted = extract_decorated_definition(\r\n                extractor,\r\n                child,\r\n                source_code,\r\n            )\r\n\r\n            if extracted:\r\n                children.append(extracted)\r\n\r\n            continue\r\n\r\n        # --------------------------------------------------------\r\n        # Normal class\r\n        # --------------------------------------------------------\r\n\r\n        if child.type == \"class_definition\":\r\n            children.append(\r\n                extract_class(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )\r\n            continue\r\n\r\n        # --------------------------------------------------------\r\n        # Normal function\r\n        # --------------------------------------------------------\r\n\r\n        if child.type in {\r\n            \"function_definition\",\r\n            \"async_function_definition\",\r\n        }:\r\n            children.append(\r\n                extract_function(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )\r\n            continue\r\n\r\n        # --------------------------------------------------------\r\n        # IF / ELIF / ELSE\r\n        # --------------------------------------------------------\r\n\r\n        if child.type == \"if_statement\":\r\n            children.append(\r\n                extract_if(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )\r\n            continue\r\n\r\n        # --------------------------------------------------------\r\n        # FOR\r\n        # --------------------------------------------------------\r\n\r\n        if child.type in {\r\n            \"for_statement\",\r\n            \"async_for_statement\",\r\n        }:\r\n            children.append(\r\n                extract_for(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )\r\n            continue\r\n\r\n        # --------------------------------------------------------\r\n        # WHILE\r\n        # --------------------------------------------------------\r\n\r\n        if child.type == \"while_statement\":\r\n            children.append(\r\n                extract_while(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )\r\n            continue\r\n\r\n        # --------------------------------------------------------\r\n        # TRY / EXCEPT / FINALLY\r\n        # --------------------------------------------------------\r\n\r\n        if child.type == \"try_statement\":\r\n            children.append(\r\n                extract_try(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )\r\n            continue\r\n\r\n        # --------------------------------------------------------\r\n        # WITH\r\n        # --------------------------------------------------------\r\n\r\n        if child.type in {\r\n            \"with_statement\",\r\n            \"async_with_statement\",\r\n        }:\r\n            children.append(\r\n                extract_with(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )\r\n            continue\r\n\r\n        # --------------------------------------------------------\r\n        # MATCH / CASE\r\n        # --------------------------------------------------------\r\n\r\n        if child.type == \"match_statement\":\r\n            children.append(\r\n                extract_match(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )\r\n            continue\r\n\r\n        # --------------------------------------------------------\r\n        # Any other node\r\n        #\r\n        # If this is a leaf node, keep it instead of losing it.\r\n        # Otherwise continue recursive extraction as before.\r\n        # --------------------------------------------------------\r\n\r\n        if not child.children:\r\n            children.append({\r\n                \"type\": child.type,\r\n                \"start_line\": child.start_point[0] + 1,\r\n                \"end_line\": child.end_point[0] + 1,\r\n                \"unmatched\" : True,\r\n                \"text\": text(extractor, child, source_code),\r\n            })\r\n            continue\r\n\r\n        nested = extract_scope(\r\n            extractor,\r\n            child,\r\n            source_code,\r\n        )\r\n\r\n        if nested:\r\n            children.extend(nested)",
+          "children": [
+            {
+              "type": "if",
+              "start_line": 78,
+              "end_line": 86,
+              "text": "if child.type == \"comment\":\r\n            children.append({\r\n                \"type\": \"comment\",\r\n                \"start_line\": child.start_point[0] + 1,\r\n                \"end_line\": child.end_point[0] + 1,\r\n                \"text\": text(extractor, child, source_code),\r\n            })\r\n\r\n            continue",
+              "children": []
+            },
+            {
+              "type": "comment",
+              "start_line": 88,
+              "end_line": 88,
+              "text": "# --------------------------------------------------------\r"
+            },
+            {
+              "type": "comment",
+              "start_line": 89,
+              "end_line": 89,
+              "text": "# Imports\r"
+            },
+            {
+              "type": "comment",
+              "start_line": 90,
+              "end_line": 90,
+              "text": "# --------------------------------------------------------\r"
+            },
+            {
+              "type": "if",
+              "start_line": 92,
+              "end_line": 103,
+              "text": "if child.type in {\r\n            \"import_statement\",\r\n            \"import_from_statement\",\r\n        }:\r\n            children.append(\r\n                extract_import(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )\r\n            continue",
+              "children": []
+            },
+            {
+              "type": "comment",
+              "start_line": 105,
+              "end_line": 105,
+              "text": "# --------------------------------------------------------\r"
+            },
+            {
+              "type": "comment",
+              "start_line": 106,
+              "end_line": 106,
+              "text": "# Assignments\r"
+            },
+            {
+              "type": "comment",
+              "start_line": 107,
+              "end_line": 107,
+              "text": "# --------------------------------------------------------\r"
+            },
+            {
+              "type": "if",
+              "start_line": 109,
+              "end_line": 122,
+              "text": "if child.type in {\r\n            \"assignment\",\r\n            \"augmented_assignment\",\r\n            \"named_expression\",\r\n            \"annotated_assignment\",\r\n        }:\r\n            children.append(\r\n                extract_assignment(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )\r\n            continue",
+              "children": []
+            },
+            {
+              "type": "comment",
+              "start_line": 124,
+              "end_line": 124,
+              "text": "# --------------------------------------------------------\r"
+            },
+            {
+              "type": "comment",
+              "start_line": 125,
+              "end_line": 125,
+              "text": "# Decorated definitions\r"
+            },
+            {
+              "type": "comment",
+              "start_line": 126,
+              "end_line": 126,
+              "text": "# --------------------------------------------------------\r"
+            },
+            {
+              "type": "if",
+              "start_line": 128,
+              "end_line": 138,
+              "text": "if child.type == \"decorated_definition\":\r\n            extracted = extract_decorated_definition(\r\n                extractor,\r\n                child,\r\n                source_code,\r\n            )\r\n\r\n            if extracted:\r\n                children.append(extracted)\r\n\r\n            continue",
+              "children": [
+                {
+                  "type": "assignment",
+                  "start_line": 129,
+                  "end_line": 133,
+                  "text": "extracted = extract_decorated_definition(\r\n                extractor,\r\n                child,\r\n                source_code,\r\n            )"
+                },
+                {
+                  "type": "if",
+                  "start_line": 135,
+                  "end_line": 136,
+                  "text": "if extracted:\r\n                children.append(extracted)",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "type": "comment",
+              "start_line": 140,
+              "end_line": 140,
+              "text": "# --------------------------------------------------------\r"
+            },
+            {
+              "type": "comment",
+              "start_line": 141,
+              "end_line": 141,
+              "text": "# Normal class\r"
+            },
+            {
+              "type": "comment",
+              "start_line": 142,
+              "end_line": 142,
+              "text": "# --------------------------------------------------------\r"
+            },
+            {
+              "type": "if",
+              "start_line": 144,
+              "end_line": 152,
+              "text": "if child.type == \"class_definition\":\r\n            children.append(\r\n                extract_class(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )\r\n            continue",
+              "children": []
+            },
+            {
+              "type": "comment",
+              "start_line": 154,
+              "end_line": 154,
+              "text": "# --------------------------------------------------------\r"
+            },
+            {
+              "type": "comment",
+              "start_line": 155,
+              "end_line": 155,
+              "text": "# Normal function\r"
+            },
+            {
+              "type": "comment",
+              "start_line": 156,
+              "end_line": 156,
+              "text": "# --------------------------------------------------------\r"
+            },
+            {
+              "type": "if",
+              "start_line": 158,
+              "end_line": 169,
+              "text": "if child.type in {\r\n            \"function_definition\",\r\n            \"async_function_definition\",\r\n        }:\r\n            children.append(\r\n                extract_function(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )\r\n            continue",
+              "children": []
+            },
+            {
+              "type": "comment",
+              "start_line": 171,
+              "end_line": 171,
+              "text": "# --------------------------------------------------------\r"
+            },
+            {
+              "type": "comment",
+              "start_line": 172,
+              "end_line": 172,
+              "text": "# IF / ELIF / ELSE\r"
+            },
+            {
+              "type": "comment",
+              "start_line": 173,
+              "end_line": 173,
+              "text": "# --------------------------------------------------------\r"
+            },
+            {
+              "type": "if",
+              "start_line": 175,
+              "end_line": 183,
+              "text": "if child.type == \"if_statement\":\r\n            children.append(\r\n                extract_if(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )\r\n            continue",
+              "children": []
+            },
+            {
+              "type": "comment",
+              "start_line": 185,
+              "end_line": 185,
+              "text": "# --------------------------------------------------------\r"
+            },
+            {
+              "type": "comment",
+              "start_line": 186,
+              "end_line": 186,
+              "text": "# FOR\r"
+            },
+            {
+              "type": "comment",
+              "start_line": 187,
+              "end_line": 187,
+              "text": "# --------------------------------------------------------\r"
+            },
+            {
+              "type": "if",
+              "start_line": 189,
+              "end_line": 200,
+              "text": "if child.type in {\r\n            \"for_statement\",\r\n            \"async_for_statement\",\r\n        }:\r\n            children.append(\r\n                extract_for(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )\r\n            continue",
+              "children": []
+            },
+            {
+              "type": "comment",
+              "start_line": 202,
+              "end_line": 202,
+              "text": "# --------------------------------------------------------\r"
+            },
+            {
+              "type": "comment",
+              "start_line": 203,
+              "end_line": 203,
+              "text": "# WHILE\r"
+            },
+            {
+              "type": "comment",
+              "start_line": 204,
+              "end_line": 204,
+              "text": "# --------------------------------------------------------\r"
+            },
+            {
+              "type": "if",
+              "start_line": 206,
+              "end_line": 214,
+              "text": "if child.type == \"while_statement\":\r\n            children.append(\r\n                extract_while(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )\r\n            continue",
+              "children": []
+            },
+            {
+              "type": "comment",
+              "start_line": 216,
+              "end_line": 216,
+              "text": "# --------------------------------------------------------\r"
+            },
+            {
+              "type": "comment",
+              "start_line": 217,
+              "end_line": 217,
+              "text": "# TRY / EXCEPT / FINALLY\r"
+            },
+            {
+              "type": "comment",
+              "start_line": 218,
+              "end_line": 218,
+              "text": "# --------------------------------------------------------\r"
+            },
+            {
+              "type": "if",
+              "start_line": 220,
+              "end_line": 228,
+              "text": "if child.type == \"try_statement\":\r\n            children.append(\r\n                extract_try(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )\r\n            continue",
+              "children": []
+            },
+            {
+              "type": "comment",
+              "start_line": 230,
+              "end_line": 230,
+              "text": "# --------------------------------------------------------\r"
+            },
+            {
+              "type": "comment",
+              "start_line": 231,
+              "end_line": 231,
+              "text": "# WITH\r"
+            },
+            {
+              "type": "comment",
+              "start_line": 232,
+              "end_line": 232,
+              "text": "# --------------------------------------------------------\r"
+            },
+            {
+              "type": "if",
+              "start_line": 234,
+              "end_line": 245,
+              "text": "if child.type in {\r\n            \"with_statement\",\r\n            \"async_with_statement\",\r\n        }:\r\n            children.append(\r\n                extract_with(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )\r\n            continue",
+              "children": []
+            },
+            {
+              "type": "comment",
+              "start_line": 247,
+              "end_line": 247,
+              "text": "# --------------------------------------------------------\r"
+            },
+            {
+              "type": "comment",
+              "start_line": 248,
+              "end_line": 248,
+              "text": "# MATCH / CASE\r"
+            },
+            {
+              "type": "comment",
+              "start_line": 249,
+              "end_line": 249,
+              "text": "# --------------------------------------------------------\r"
+            },
+            {
+              "type": "if",
+              "start_line": 251,
+              "end_line": 259,
+              "text": "if child.type == \"match_statement\":\r\n            children.append(\r\n                extract_match(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )\r\n            continue",
+              "children": []
+            },
+            {
+              "type": "comment",
+              "start_line": 261,
+              "end_line": 261,
+              "text": "# --------------------------------------------------------\r"
+            },
+            {
+              "type": "comment",
+              "start_line": 262,
+              "end_line": 262,
+              "text": "# Any other node\r"
+            },
+            {
+              "type": "comment",
+              "start_line": 263,
+              "end_line": 263,
+              "text": "#\r"
+            },
+            {
+              "type": "comment",
+              "start_line": 264,
+              "end_line": 264,
+              "text": "# If this is a leaf node, keep it instead of losing it.\r"
+            },
+            {
+              "type": "comment",
+              "start_line": 265,
+              "end_line": 265,
+              "text": "# Otherwise continue recursive extraction as before.\r"
+            },
+            {
+              "type": "comment",
+              "start_line": 266,
+              "end_line": 266,
+              "text": "# --------------------------------------------------------\r"
+            },
+            {
+              "type": "if",
+              "start_line": 268,
+              "end_line": 276,
+              "text": "if not child.children:\r\n            children.append({\r\n                \"type\": child.type,\r\n                \"start_line\": child.start_point[0] + 1,\r\n                \"end_line\": child.end_point[0] + 1,\r\n                \"unmatched\" : True,\r\n                \"text\": text(extractor, child, source_code),\r\n            })\r\n            continue",
+              "children": []
+            },
+            {
+              "type": "assignment",
+              "start_line": 278,
+              "end_line": 282,
+              "text": "nested = extract_scope(\r\n            extractor,\r\n            child,\r\n            source_code,\r\n        )"
+            },
+            {
+              "type": "if",
+              "start_line": 284,
+              "end_line": 285,
+              "text": "if nested:\r\n            children.extend(nested)",
+              "children": []
+            }
+          ]
+        }
+      ],
+      "parameters": "(extractor, node, source_code)"
+    },
+    {
+      "type": "comment",
+      "start_line": 290,
+      "end_line": 290,
+      "text": "# ================================================================\r"
+    },
+    {
+      "type": "comment",
+      "start_line": 291,
+      "end_line": 291,
+      "text": "# IMPORTS\r"
+    },
+    {
+      "type": "comment",
+      "start_line": 292,
+      "end_line": 292,
+      "text": "# ================================================================\r"
+    },
+    {
+      "type": "function",
+      "name": "extract_import",
+      "start_line": 295,
+      "end_line": 301,
+      "text": "def extract_import(extractor, node, source_code):\r\n    return {\r\n        \"type\": \"import\",\r\n        \"start_line\": node.start_point[0] + 1,\r\n        \"end_line\": node.end_point[0] + 1,\r\n        \"text\": text(extractor, node, source_code),\r\n    }",
+      "children": [],
+      "parameters": "(extractor, node, source_code)"
+    },
+    {
+      "type": "comment",
+      "start_line": 304,
+      "end_line": 304,
+      "text": "# ================================================================\r"
+    },
+    {
+      "type": "comment",
+      "start_line": 305,
+      "end_line": 305,
+      "text": "# ASSIGNMENTS\r"
+    },
+    {
+      "type": "comment",
+      "start_line": 306,
+      "end_line": 306,
+      "text": "# ================================================================\r"
+    },
+    {
+      "type": "function",
+      "name": "extract_assignment",
+      "start_line": 309,
+      "end_line": 315,
+      "text": "def extract_assignment(extractor, node, source_code):\r\n    return {\r\n        \"type\": \"assignment\",\r\n        \"start_line\": node.start_point[0] + 1,\r\n        \"end_line\": node.end_point[0] + 1,\r\n        \"text\": text(extractor, node, source_code),\r\n    }",
+      "children": [],
+      "parameters": "(extractor, node, source_code)"
+    },
+    {
+      "type": "comment",
+      "start_line": 318,
+      "end_line": 318,
+      "text": "# ================================================================\r"
+    },
+    {
+      "type": "comment",
+      "start_line": 319,
+      "end_line": 319,
+      "text": "# CLASS\r"
+    },
+    {
+      "type": "comment",
+      "start_line": 320,
+      "end_line": 320,
+      "text": "# ================================================================\r"
+    },
+    {
+      "type": "function",
+      "name": "extract_class",
+      "start_line": 323,
+      "end_line": 384,
+      "text": "def extract_class(extractor, node, source_code):\r\n    name = None\r\n\r\n    for child in node.children:\r\n        if child.type == \"identifier\":\r\n            name = text(\r\n                extractor,\r\n                child,\r\n                source_code,\r\n            )\r\n            break\r\n\r\n    result = {\r\n        \"type\": \"class\",\r\n        \"name\": name,\r\n        \"start_line\": node.start_point[0] + 1,\r\n        \"end_line\": node.end_point[0] + 1,\r\n        \"text\": text(extractor, node, source_code),\r\n        \"children\": [],\r\n    }\r\n\r\n    # ------------------------------------------------------------\r\n    # Extract class body\r\n    # ------------------------------------------------------------\r\n\r\n    body = find_child(node, \"block\")\r\n\r\n    if body:\r\n        result[\"children\"] = extract_scope(\r\n            extractor,\r\n            body,\r\n            source_code,\r\n        )\r\n\r\n    # ------------------------------------------------------------\r\n    # Extract inheritance\r\n    # ------------------------------------------------------------\r\n\r\n    superclasses = []\r\n\r\n    for child in node.children:\r\n        if child.type == \"argument_list\":\r\n\r\n            for argument in child.children:\r\n\r\n                if argument.type not in {\r\n                    \"(\",\r\n                    \")\",\r\n                    \",\",\r\n                }:\r\n                    superclasses.append(\r\n                        text(\r\n                            extractor,\r\n                            argument,\r\n                            source_code,\r\n                        )\r\n                    )\r\n\r\n    if superclasses:\r\n        result[\"bases\"] = superclasses\r\n\r\n    return result",
+      "children": [
+        {
+          "type": "assignment",
+          "start_line": 324,
+          "end_line": 324,
+          "text": "name = None"
+        },
+        {
+          "type": "for",
+          "start_line": 326,
+          "end_line": 333,
+          "text": "for child in node.children:\r\n        if child.type == \"identifier\":\r\n            name = text(\r\n                extractor,\r\n                child,\r\n                source_code,\r\n            )\r\n            break",
+          "children": [
+            {
+              "type": "if",
+              "start_line": 327,
+              "end_line": 333,
+              "text": "if child.type == \"identifier\":\r\n            name = text(\r\n                extractor,\r\n                child,\r\n                source_code,\r\n            )\r\n            break",
+              "children": [
+                {
+                  "type": "assignment",
+                  "start_line": 328,
+                  "end_line": 332,
+                  "text": "name = text(\r\n                extractor,\r\n                child,\r\n                source_code,\r\n            )"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "assignment",
+          "start_line": 335,
+          "end_line": 342,
+          "text": "result = {\r\n        \"type\": \"class\",\r\n        \"name\": name,\r\n        \"start_line\": node.start_point[0] + 1,\r\n        \"end_line\": node.end_point[0] + 1,\r\n        \"text\": text(extractor, node, source_code),\r\n        \"children\": [],\r\n    }"
+        },
+        {
+          "type": "comment",
+          "start_line": 344,
+          "end_line": 344,
+          "text": "# ------------------------------------------------------------\r"
+        },
+        {
+          "type": "comment",
+          "start_line": 345,
+          "end_line": 345,
+          "text": "# Extract class body\r"
+        },
+        {
+          "type": "comment",
+          "start_line": 346,
+          "end_line": 346,
+          "text": "# ------------------------------------------------------------\r"
+        },
+        {
+          "type": "assignment",
+          "start_line": 348,
+          "end_line": 348,
+          "text": "body = find_child(node, \"block\")"
+        },
+        {
+          "type": "if",
+          "start_line": 350,
+          "end_line": 355,
+          "text": "if body:\r\n        result[\"children\"] = extract_scope(\r\n            extractor,\r\n            body,\r\n            source_code,\r\n        )",
+          "children": [
+            {
+              "type": "assignment",
+              "start_line": 351,
+              "end_line": 355,
+              "text": "result[\"children\"] = extract_scope(\r\n            extractor,\r\n            body,\r\n            source_code,\r\n        )"
+            }
+          ]
+        },
+        {
+          "type": "comment",
+          "start_line": 357,
+          "end_line": 357,
+          "text": "# ------------------------------------------------------------\r"
+        },
+        {
+          "type": "comment",
+          "start_line": 358,
+          "end_line": 358,
+          "text": "# Extract inheritance\r"
+        },
+        {
+          "type": "comment",
+          "start_line": 359,
+          "end_line": 359,
+          "text": "# ------------------------------------------------------------\r"
+        },
+        {
+          "type": "assignment",
+          "start_line": 361,
+          "end_line": 361,
+          "text": "superclasses = []"
+        },
+        {
+          "type": "for",
+          "start_line": 363,
+          "end_line": 379,
+          "text": "for child in node.children:\r\n        if child.type == \"argument_list\":\r\n\r\n            for argument in child.children:\r\n\r\n                if argument.type not in {\r\n                    \"(\",\r\n                    \")\",\r\n                    \",\",\r\n                }:\r\n                    superclasses.append(\r\n                        text(\r\n                            extractor,\r\n                            argument,\r\n                            source_code,\r\n                        )\r\n                    )",
+          "children": [
+            {
+              "type": "if",
+              "start_line": 364,
+              "end_line": 379,
+              "text": "if child.type == \"argument_list\":\r\n\r\n            for argument in child.children:\r\n\r\n                if argument.type not in {\r\n                    \"(\",\r\n                    \")\",\r\n                    \",\",\r\n                }:\r\n                    superclasses.append(\r\n                        text(\r\n                            extractor,\r\n                            argument,\r\n                            source_code,\r\n                        )\r\n                    )",
+              "children": [
+                {
+                  "type": "for",
+                  "start_line": 366,
+                  "end_line": 379,
+                  "text": "for argument in child.children:\r\n\r\n                if argument.type not in {\r\n                    \"(\",\r\n                    \")\",\r\n                    \",\",\r\n                }:\r\n                    superclasses.append(\r\n                        text(\r\n                            extractor,\r\n                            argument,\r\n                            source_code,\r\n                        )\r\n                    )",
+                  "children": [
+                    {
+                      "type": "if",
+                      "start_line": 368,
+                      "end_line": 379,
+                      "text": "if argument.type not in {\r\n                    \"(\",\r\n                    \")\",\r\n                    \",\",\r\n                }:\r\n                    superclasses.append(\r\n                        text(\r\n                            extractor,\r\n                            argument,\r\n                            source_code,\r\n                        )\r\n                    )",
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "if",
+          "start_line": 381,
+          "end_line": 382,
+          "text": "if superclasses:\r\n        result[\"bases\"] = superclasses",
+          "children": [
+            {
+              "type": "assignment",
+              "start_line": 382,
+              "end_line": 382,
+              "text": "result[\"bases\"] = superclasses"
+            }
+          ]
+        }
+      ],
+      "parameters": "(extractor, node, source_code)"
+    },
+    {
+      "type": "comment",
+      "start_line": 387,
+      "end_line": 387,
+      "text": "# ================================================================\r"
+    },
+    {
+      "type": "comment",
+      "start_line": 388,
+      "end_line": 388,
+      "text": "# FUNCTION\r"
+    },
+    {
+      "type": "comment",
+      "start_line": 389,
+      "end_line": 389,
+      "text": "# ================================================================\r"
+    },
+    {
+      "type": "function",
+      "name": "extract_function",
+      "start_line": 392,
+      "end_line": 469,
+      "text": "def extract_function(extractor, node, source_code):\r\n    name = None\r\n\r\n    for child in node.children:\r\n\r\n        if child.type == \"identifier\":\r\n            name = text(\r\n                extractor,\r\n                child,\r\n                source_code,\r\n            )\r\n            break\r\n\r\n    result = {\r\n        \"type\": \"function\",\r\n        \"name\": name,\r\n        \"start_line\": node.start_point[0] + 1,\r\n        \"end_line\": node.end_point[0] + 1,\r\n        \"text\": text(extractor, node, source_code),\r\n        \"children\": [],\r\n    }\r\n\r\n    # ------------------------------------------------------------\r\n    # Async function\r\n    # ------------------------------------------------------------\r\n\r\n    if node.type == \"async_function_definition\":\r\n        result[\"async\"] = True\r\n\r\n    # ------------------------------------------------------------\r\n    # Extract parameters\r\n    # ------------------------------------------------------------\r\n\r\n    parameters = find_child(\r\n        node,\r\n        \"parameters\",\r\n    )\r\n\r\n    if parameters:\r\n        result[\"parameters\"] = text(\r\n            extractor,\r\n            parameters,\r\n            source_code,\r\n        )\r\n\r\n    # ------------------------------------------------------------\r\n    # Extract return type\r\n    # ------------------------------------------------------------\r\n\r\n    return_type = find_child(\r\n        node,\r\n        \"type\",\r\n    )\r\n\r\n    if return_type:\r\n        result[\"return_type\"] = text(\r\n            extractor,\r\n            return_type,\r\n            source_code,\r\n        )\r\n\r\n    # ------------------------------------------------------------\r\n    # Extract function body\r\n    # ------------------------------------------------------------\r\n\r\n    body = find_child(\r\n        node,\r\n        \"block\",\r\n    )\r\n\r\n    if body:\r\n        result[\"children\"] = extract_scope(\r\n            extractor,\r\n            body,\r\n            source_code,\r\n        )\r\n\r\n    return result",
+      "children": [
+        {
+          "type": "assignment",
+          "start_line": 393,
+          "end_line": 393,
+          "text": "name = None"
+        },
+        {
+          "type": "for",
+          "start_line": 395,
+          "end_line": 403,
+          "text": "for child in node.children:\r\n\r\n        if child.type == \"identifier\":\r\n            name = text(\r\n                extractor,\r\n                child,\r\n                source_code,\r\n            )\r\n            break",
+          "children": [
+            {
+              "type": "if",
+              "start_line": 397,
+              "end_line": 403,
+              "text": "if child.type == \"identifier\":\r\n            name = text(\r\n                extractor,\r\n                child,\r\n                source_code,\r\n            )\r\n            break",
+              "children": [
+                {
+                  "type": "assignment",
+                  "start_line": 398,
+                  "end_line": 402,
+                  "text": "name = text(\r\n                extractor,\r\n                child,\r\n                source_code,\r\n            )"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "assignment",
+          "start_line": 405,
+          "end_line": 412,
+          "text": "result = {\r\n        \"type\": \"function\",\r\n        \"name\": name,\r\n        \"start_line\": node.start_point[0] + 1,\r\n        \"end_line\": node.end_point[0] + 1,\r\n        \"text\": text(extractor, node, source_code),\r\n        \"children\": [],\r\n    }"
+        },
+        {
+          "type": "comment",
+          "start_line": 414,
+          "end_line": 414,
+          "text": "# ------------------------------------------------------------\r"
+        },
+        {
+          "type": "comment",
+          "start_line": 415,
+          "end_line": 415,
+          "text": "# Async function\r"
+        },
+        {
+          "type": "comment",
+          "start_line": 416,
+          "end_line": 416,
+          "text": "# ------------------------------------------------------------\r"
+        },
+        {
+          "type": "if",
+          "start_line": 418,
+          "end_line": 419,
+          "text": "if node.type == \"async_function_definition\":\r\n        result[\"async\"] = True",
+          "children": [
+            {
+              "type": "assignment",
+              "start_line": 419,
+              "end_line": 419,
+              "text": "result[\"async\"] = True"
+            }
+          ]
+        },
+        {
+          "type": "comment",
+          "start_line": 421,
+          "end_line": 421,
+          "text": "# ------------------------------------------------------------\r"
+        },
+        {
+          "type": "comment",
+          "start_line": 422,
+          "end_line": 422,
+          "text": "# Extract parameters\r"
+        },
+        {
+          "type": "comment",
+          "start_line": 423,
+          "end_line": 423,
+          "text": "# ------------------------------------------------------------\r"
+        },
+        {
+          "type": "assignment",
+          "start_line": 425,
+          "end_line": 428,
+          "text": "parameters = find_child(\r\n        node,\r\n        \"parameters\",\r\n    )"
+        },
+        {
+          "type": "if",
+          "start_line": 430,
+          "end_line": 435,
+          "text": "if parameters:\r\n        result[\"parameters\"] = text(\r\n            extractor,\r\n            parameters,\r\n            source_code,\r\n        )",
+          "children": [
+            {
+              "type": "assignment",
+              "start_line": 431,
+              "end_line": 435,
+              "text": "result[\"parameters\"] = text(\r\n            extractor,\r\n            parameters,\r\n            source_code,\r\n        )"
+            }
+          ]
+        },
+        {
+          "type": "comment",
+          "start_line": 437,
+          "end_line": 437,
+          "text": "# ------------------------------------------------------------\r"
+        },
+        {
+          "type": "comment",
+          "start_line": 438,
+          "end_line": 438,
+          "text": "# Extract return type\r"
+        },
+        {
+          "type": "comment",
+          "start_line": 439,
+          "end_line": 439,
+          "text": "# ------------------------------------------------------------\r"
+        },
+        {
+          "type": "assignment",
+          "start_line": 441,
+          "end_line": 444,
+          "text": "return_type = find_child(\r\n        node,\r\n        \"type\",\r\n    )"
+        },
+        {
+          "type": "if",
+          "start_line": 446,
+          "end_line": 451,
+          "text": "if return_type:\r\n        result[\"return_type\"] = text(\r\n            extractor,\r\n            return_type,\r\n            source_code,\r\n        )",
+          "children": [
+            {
+              "type": "assignment",
+              "start_line": 447,
+              "end_line": 451,
+              "text": "result[\"return_type\"] = text(\r\n            extractor,\r\n            return_type,\r\n            source_code,\r\n        )"
+            }
+          ]
+        },
+        {
+          "type": "comment",
+          "start_line": 453,
+          "end_line": 453,
+          "text": "# ------------------------------------------------------------\r"
+        },
+        {
+          "type": "comment",
+          "start_line": 454,
+          "end_line": 454,
+          "text": "# Extract function body\r"
+        },
+        {
+          "type": "comment",
+          "start_line": 455,
+          "end_line": 455,
+          "text": "# ------------------------------------------------------------\r"
+        },
+        {
+          "type": "assignment",
+          "start_line": 457,
+          "end_line": 460,
+          "text": "body = find_child(\r\n        node,\r\n        \"block\",\r\n    )"
+        },
+        {
+          "type": "if",
+          "start_line": 462,
+          "end_line": 467,
+          "text": "if body:\r\n        result[\"children\"] = extract_scope(\r\n            extractor,\r\n            body,\r\n            source_code,\r\n        )",
+          "children": [
+            {
+              "type": "assignment",
+              "start_line": 463,
+              "end_line": 467,
+              "text": "result[\"children\"] = extract_scope(\r\n            extractor,\r\n            body,\r\n            source_code,\r\n        )"
+            }
+          ]
+        }
+      ],
+      "parameters": "(extractor, node, source_code)"
+    },
+    {
+      "type": "comment",
+      "start_line": 472,
+      "end_line": 472,
+      "text": "# ================================================================\r"
+    },
+    {
+      "type": "comment",
+      "start_line": 473,
+      "end_line": 473,
+      "text": "# DECORATED DEFINITION\r"
+    },
+    {
+      "type": "comment",
+      "start_line": 474,
+      "end_line": 474,
+      "text": "# ================================================================\r"
+    },
+    {
+      "type": "function",
+      "name": "extract_decorated_definition",
+      "start_line": 477,
+      "end_line": 561,
+      "text": "def extract_decorated_definition(\r\n    extractor,\r\n    node,\r\n    source_code,\r\n):\r\n    \"\"\"\r\n    Handles:\r\n\r\n        @decorator\r\n        def func():\r\n            ...\r\n\r\n    and:\r\n\r\n        @decorator(...)\r\n        class MyClass:\r\n            ...\r\n    \"\"\"\r\n\r\n    decorators = []\r\n    definition = None\r\n\r\n    for child in node.children:\r\n\r\n        if child.type == \"decorator\":\r\n\r\n            decorators.append({\r\n                \"type\": \"decorator\",\r\n                \"text\": text(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                ),\r\n                \"start_line\": child.start_point[0] + 1,\r\n                \"end_line\": child.end_point[0] + 1,\r\n            })\r\n\r\n        elif child.type in {\r\n            \"function_definition\",\r\n            \"async_function_definition\",\r\n            \"class_definition\",\r\n        }:\r\n            definition = child\r\n\r\n    if definition is None:\r\n        return None\r\n\r\n    # ------------------------------------------------------------\r\n    # Extract actual definition\r\n    # ------------------------------------------------------------\r\n\r\n    if definition.type in {\r\n        \"function_definition\",\r\n        \"async_function_definition\",\r\n    }:\r\n        result = extract_function(\r\n            extractor,\r\n            definition,\r\n            source_code,\r\n        )\r\n\r\n    else:\r\n        result = extract_class(\r\n            extractor,\r\n            definition,\r\n            source_code,\r\n        )\r\n\r\n    # ------------------------------------------------------------\r\n    # Attach decorators\r\n    # ------------------------------------------------------------\r\n\r\n    if decorators:\r\n        result[\"decorators\"] = decorators\r\n\r\n    # The decorated definition starts at the first decorator.\r\n    result[\"start_line\"] = node.start_point[0] + 1\r\n    result[\"end_line\"] = node.end_point[0] + 1\r\n    result[\"text\"] = text(\r\n        extractor,\r\n        node,\r\n        source_code,\r\n    )\r\n\r\n    return result",
+      "children": [
+        {
+          "type": "assignment",
+          "start_line": 496,
+          "end_line": 496,
+          "text": "decorators = []"
+        },
+        {
+          "type": "assignment",
+          "start_line": 497,
+          "end_line": 497,
+          "text": "definition = None"
+        },
+        {
+          "type": "for",
+          "start_line": 499,
+          "end_line": 519,
+          "text": "for child in node.children:\r\n\r\n        if child.type == \"decorator\":\r\n\r\n            decorators.append({\r\n                \"type\": \"decorator\",\r\n                \"text\": text(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                ),\r\n                \"start_line\": child.start_point[0] + 1,\r\n                \"end_line\": child.end_point[0] + 1,\r\n            })\r\n\r\n        elif child.type in {\r\n            \"function_definition\",\r\n            \"async_function_definition\",\r\n            \"class_definition\",\r\n        }:\r\n            definition = child",
+          "children": [
+            {
+              "type": "if",
+              "start_line": 501,
+              "end_line": 519,
+              "text": "if child.type == \"decorator\":\r\n\r\n            decorators.append({\r\n                \"type\": \"decorator\",\r\n                \"text\": text(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                ),\r\n                \"start_line\": child.start_point[0] + 1,\r\n                \"end_line\": child.end_point[0] + 1,\r\n            })\r\n\r\n        elif child.type in {\r\n            \"function_definition\",\r\n            \"async_function_definition\",\r\n            \"class_definition\",\r\n        }:\r\n            definition = child",
+              "children": [
+                {
+                  "type": "elif",
+                  "start_line": 514,
+                  "end_line": 519,
+                  "text": "elif child.type in {\r\n            \"function_definition\",\r\n            \"async_function_definition\",\r\n            \"class_definition\",\r\n        }:\r\n            definition = child",
+                  "children": [
+                    {
+                      "type": "assignment",
+                      "start_line": 519,
+                      "end_line": 519,
+                      "text": "definition = child"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "if",
+          "start_line": 521,
+          "end_line": 522,
+          "text": "if definition is None:\r\n        return None",
+          "children": []
+        },
+        {
+          "type": "comment",
+          "start_line": 524,
+          "end_line": 524,
+          "text": "# ------------------------------------------------------------\r"
+        },
+        {
+          "type": "comment",
+          "start_line": 525,
+          "end_line": 525,
+          "text": "# Extract actual definition\r"
+        },
+        {
+          "type": "comment",
+          "start_line": 526,
+          "end_line": 526,
+          "text": "# ------------------------------------------------------------\r"
+        },
+        {
+          "type": "if",
+          "start_line": 528,
+          "end_line": 543,
+          "text": "if definition.type in {\r\n        \"function_definition\",\r\n        \"async_function_definition\",\r\n    }:\r\n        result = extract_function(\r\n            extractor,\r\n            definition,\r\n            source_code,\r\n        )\r\n\r\n    else:\r\n        result = extract_class(\r\n            extractor,\r\n            definition,\r\n            source_code,\r\n        )",
+          "children": [
+            {
+              "type": "assignment",
+              "start_line": 532,
+              "end_line": 536,
+              "text": "result = extract_function(\r\n            extractor,\r\n            definition,\r\n            source_code,\r\n        )"
+            },
+            {
+              "type": "else",
+              "start_line": 538,
+              "end_line": 543,
+              "text": "else:\r\n        result = extract_class(\r\n            extractor,\r\n            definition,\r\n            source_code,\r\n        )",
+              "children": [
+                {
+                  "type": "assignment",
+                  "start_line": 539,
+                  "end_line": 543,
+                  "text": "result = extract_class(\r\n            extractor,\r\n            definition,\r\n            source_code,\r\n        )"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "comment",
+          "start_line": 545,
+          "end_line": 545,
+          "text": "# ------------------------------------------------------------\r"
+        },
+        {
+          "type": "comment",
+          "start_line": 546,
+          "end_line": 546,
+          "text": "# Attach decorators\r"
+        },
+        {
+          "type": "comment",
+          "start_line": 547,
+          "end_line": 547,
+          "text": "# ------------------------------------------------------------\r"
+        },
+        {
+          "type": "if",
+          "start_line": 549,
+          "end_line": 550,
+          "text": "if decorators:\r\n        result[\"decorators\"] = decorators",
+          "children": [
+            {
+              "type": "assignment",
+              "start_line": 550,
+              "end_line": 550,
+              "text": "result[\"decorators\"] = decorators"
+            }
+          ]
+        },
+        {
+          "type": "comment",
+          "start_line": 552,
+          "end_line": 552,
+          "text": "# The decorated definition starts at the first decorator.\r"
+        },
+        {
+          "type": "assignment",
+          "start_line": 553,
+          "end_line": 553,
+          "text": "result[\"start_line\"] = node.start_point[0] + 1"
+        },
+        {
+          "type": "assignment",
+          "start_line": 554,
+          "end_line": 554,
+          "text": "result[\"end_line\"] = node.end_point[0] + 1"
+        },
+        {
+          "type": "assignment",
+          "start_line": 555,
+          "end_line": 559,
+          "text": "result[\"text\"] = text(\r\n        extractor,\r\n        node,\r\n        source_code,\r\n    )"
+        }
+      ],
+      "parameters": "(\r\n    extractor,\r\n    node,\r\n    source_code,\r\n)"
+    },
+    {
+      "type": "comment",
+      "start_line": 564,
+      "end_line": 564,
+      "text": "# ================================================================\r"
+    },
+    {
+      "type": "comment",
+      "start_line": 565,
+      "end_line": 565,
+      "text": "# IF / ELIF / ELSE\r"
+    },
+    {
+      "type": "comment",
+      "start_line": 566,
+      "end_line": 566,
+      "text": "# ================================================================\r"
+    },
+    {
+      "type": "function",
+      "name": "extract_if",
+      "start_line": 569,
+      "end_line": 622,
+      "text": "def extract_if(extractor, node, source_code):\r\n    result = {\r\n        \"type\": \"if\",\r\n        \"start_line\": node.start_point[0] + 1,\r\n        \"end_line\": node.end_point[0] + 1,\r\n        \"text\": text(extractor, node, source_code),\r\n        \"children\": [],\r\n    }\r\n\r\n    for child in node.children:\r\n\r\n        # --------------------------------------------------------\r\n        # Main IF body\r\n        # --------------------------------------------------------\r\n\r\n        if child.type == \"block\":\r\n\r\n            result[\"children\"].extend(\r\n                extract_scope(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )\r\n\r\n        # --------------------------------------------------------\r\n        # ELIF\r\n        # --------------------------------------------------------\r\n\r\n        elif child.type == \"elif_clause\":\r\n\r\n            result[\"children\"].append(\r\n                extract_elif(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )\r\n\r\n        # --------------------------------------------------------\r\n        # ELSE\r\n        # --------------------------------------------------------\r\n\r\n        elif child.type == \"else_clause\":\r\n\r\n            result[\"children\"].append(\r\n                extract_else(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )\r\n\r\n    return result",
+      "children": [
+        {
+          "type": "assignment",
+          "start_line": 570,
+          "end_line": 576,
+          "text": "result = {\r\n        \"type\": \"if\",\r\n        \"start_line\": node.start_point[0] + 1,\r\n        \"end_line\": node.end_point[0] + 1,\r\n        \"text\": text(extractor, node, source_code),\r\n        \"children\": [],\r\n    }"
+        },
+        {
+          "type": "for",
+          "start_line": 578,
+          "end_line": 620,
+          "text": "for child in node.children:\r\n\r\n        # --------------------------------------------------------\r\n        # Main IF body\r\n        # --------------------------------------------------------\r\n\r\n        if child.type == \"block\":\r\n\r\n            result[\"children\"].extend(\r\n                extract_scope(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )\r\n\r\n        # --------------------------------------------------------\r\n        # ELIF\r\n        # --------------------------------------------------------\r\n\r\n        elif child.type == \"elif_clause\":\r\n\r\n            result[\"children\"].append(\r\n                extract_elif(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )\r\n\r\n        # --------------------------------------------------------\r\n        # ELSE\r\n        # --------------------------------------------------------\r\n\r\n        elif child.type == \"else_clause\":\r\n\r\n            result[\"children\"].append(\r\n                extract_else(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )",
+          "children": [
+            {
+              "type": "if",
+              "start_line": 584,
+              "end_line": 620,
+              "text": "if child.type == \"block\":\r\n\r\n            result[\"children\"].extend(\r\n                extract_scope(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )\r\n\r\n        # --------------------------------------------------------\r\n        # ELIF\r\n        # --------------------------------------------------------\r\n\r\n        elif child.type == \"elif_clause\":\r\n\r\n            result[\"children\"].append(\r\n                extract_elif(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )\r\n\r\n        # --------------------------------------------------------\r\n        # ELSE\r\n        # --------------------------------------------------------\r\n\r\n        elif child.type == \"else_clause\":\r\n\r\n            result[\"children\"].append(\r\n                extract_else(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )",
+              "children": [
+                {
+                  "type": "elif",
+                  "start_line": 598,
+                  "end_line": 606,
+                  "text": "elif child.type == \"elif_clause\":\r\n\r\n            result[\"children\"].append(\r\n                extract_elif(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )",
+                  "children": []
+                },
+                {
+                  "type": "elif",
+                  "start_line": 612,
+                  "end_line": 620,
+                  "text": "elif child.type == \"else_clause\":\r\n\r\n            result[\"children\"].append(\r\n                extract_else(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )",
+                  "children": []
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "parameters": "(extractor, node, source_code)"
+    },
+    {
+      "type": "function",
+      "name": "extract_elif",
+      "start_line": 625,
+      "end_line": 646,
+      "text": "def extract_elif(extractor, node, source_code):\r\n    result = {\r\n        \"type\": \"elif\",\r\n        \"start_line\": node.start_point[0] + 1,\r\n        \"end_line\": node.end_point[0] + 1,\r\n        \"text\": text(extractor, node, source_code),\r\n        \"children\": [],\r\n    }\r\n\r\n    body = find_child(\r\n        node,\r\n        \"block\",\r\n    )\r\n\r\n    if body:\r\n        result[\"children\"] = extract_scope(\r\n            extractor,\r\n            body,\r\n            source_code,\r\n        )\r\n\r\n    return result",
+      "children": [
+        {
+          "type": "assignment",
+          "start_line": 626,
+          "end_line": 632,
+          "text": "result = {\r\n        \"type\": \"elif\",\r\n        \"start_line\": node.start_point[0] + 1,\r\n        \"end_line\": node.end_point[0] + 1,\r\n        \"text\": text(extractor, node, source_code),\r\n        \"children\": [],\r\n    }"
+        },
+        {
+          "type": "assignment",
+          "start_line": 634,
+          "end_line": 637,
+          "text": "body = find_child(\r\n        node,\r\n        \"block\",\r\n    )"
+        },
+        {
+          "type": "if",
+          "start_line": 639,
+          "end_line": 644,
+          "text": "if body:\r\n        result[\"children\"] = extract_scope(\r\n            extractor,\r\n            body,\r\n            source_code,\r\n        )",
+          "children": [
+            {
+              "type": "assignment",
+              "start_line": 640,
+              "end_line": 644,
+              "text": "result[\"children\"] = extract_scope(\r\n            extractor,\r\n            body,\r\n            source_code,\r\n        )"
+            }
+          ]
+        }
+      ],
+      "parameters": "(extractor, node, source_code)"
+    },
+    {
+      "type": "function",
+      "name": "extract_else",
+      "start_line": 649,
+      "end_line": 670,
+      "text": "def extract_else(extractor, node, source_code):\r\n    result = {\r\n        \"type\": \"else\",\r\n        \"start_line\": node.start_point[0] + 1,\r\n        \"end_line\": node.end_point[0] + 1,\r\n        \"text\": text(extractor, node, source_code),\r\n        \"children\": [],\r\n    }\r\n\r\n    body = find_child(\r\n        node,\r\n        \"block\",\r\n    )\r\n\r\n    if body:\r\n        result[\"children\"] = extract_scope(\r\n            extractor,\r\n            body,\r\n            source_code,\r\n        )\r\n\r\n    return result",
+      "children": [
+        {
+          "type": "assignment",
+          "start_line": 650,
+          "end_line": 656,
+          "text": "result = {\r\n        \"type\": \"else\",\r\n        \"start_line\": node.start_point[0] + 1,\r\n        \"end_line\": node.end_point[0] + 1,\r\n        \"text\": text(extractor, node, source_code),\r\n        \"children\": [],\r\n    }"
+        },
+        {
+          "type": "assignment",
+          "start_line": 658,
+          "end_line": 661,
+          "text": "body = find_child(\r\n        node,\r\n        \"block\",\r\n    )"
+        },
+        {
+          "type": "if",
+          "start_line": 663,
+          "end_line": 668,
+          "text": "if body:\r\n        result[\"children\"] = extract_scope(\r\n            extractor,\r\n            body,\r\n            source_code,\r\n        )",
+          "children": [
+            {
+              "type": "assignment",
+              "start_line": 664,
+              "end_line": 668,
+              "text": "result[\"children\"] = extract_scope(\r\n            extractor,\r\n            body,\r\n            source_code,\r\n        )"
+            }
+          ]
+        }
+      ],
+      "parameters": "(extractor, node, source_code)"
+    },
+    {
+      "type": "comment",
+      "start_line": 673,
+      "end_line": 673,
+      "text": "# ================================================================\r"
+    },
+    {
+      "type": "comment",
+      "start_line": 674,
+      "end_line": 674,
+      "text": "# FOR\r"
+    },
+    {
+      "type": "comment",
+      "start_line": 675,
+      "end_line": 675,
+      "text": "# ================================================================\r"
+    },
+    {
+      "type": "function",
+      "name": "extract_for",
+      "start_line": 678,
+      "end_line": 702,
+      "text": "def extract_for(extractor, node, source_code):\r\n    result = {\r\n        \"type\": \"for\",\r\n        \"start_line\": node.start_point[0] + 1,\r\n        \"end_line\": node.end_point[0] + 1,\r\n        \"text\": text(extractor, node, source_code),\r\n        \"children\": [],\r\n    }\r\n\r\n    if node.type == \"async_for_statement\":\r\n        result[\"async\"] = True\r\n\r\n    body = find_child(\r\n        node,\r\n        \"block\",\r\n    )\r\n\r\n    if body:\r\n        result[\"children\"] = extract_scope(\r\n            extractor,\r\n            body,\r\n            source_code,\r\n        )\r\n\r\n    return result",
+      "children": [
+        {
+          "type": "assignment",
+          "start_line": 679,
+          "end_line": 685,
+          "text": "result = {\r\n        \"type\": \"for\",\r\n        \"start_line\": node.start_point[0] + 1,\r\n        \"end_line\": node.end_point[0] + 1,\r\n        \"text\": text(extractor, node, source_code),\r\n        \"children\": [],\r\n    }"
+        },
+        {
+          "type": "if",
+          "start_line": 687,
+          "end_line": 688,
+          "text": "if node.type == \"async_for_statement\":\r\n        result[\"async\"] = True",
+          "children": [
+            {
+              "type": "assignment",
+              "start_line": 688,
+              "end_line": 688,
+              "text": "result[\"async\"] = True"
+            }
+          ]
+        },
+        {
+          "type": "assignment",
+          "start_line": 690,
+          "end_line": 693,
+          "text": "body = find_child(\r\n        node,\r\n        \"block\",\r\n    )"
+        },
+        {
+          "type": "if",
+          "start_line": 695,
+          "end_line": 700,
+          "text": "if body:\r\n        result[\"children\"] = extract_scope(\r\n            extractor,\r\n            body,\r\n            source_code,\r\n        )",
+          "children": [
+            {
+              "type": "assignment",
+              "start_line": 696,
+              "end_line": 700,
+              "text": "result[\"children\"] = extract_scope(\r\n            extractor,\r\n            body,\r\n            source_code,\r\n        )"
+            }
+          ]
+        }
+      ],
+      "parameters": "(extractor, node, source_code)"
+    },
+    {
+      "type": "comment",
+      "start_line": 705,
+      "end_line": 705,
+      "text": "# ================================================================\r"
+    },
+    {
+      "type": "comment",
+      "start_line": 706,
+      "end_line": 706,
+      "text": "# WHILE\r"
+    },
+    {
+      "type": "comment",
+      "start_line": 707,
+      "end_line": 707,
+      "text": "# ================================================================\r"
+    },
+    {
+      "type": "function",
+      "name": "extract_while",
+      "start_line": 710,
+      "end_line": 731,
+      "text": "def extract_while(extractor, node, source_code):\r\n    result = {\r\n        \"type\": \"while\",\r\n        \"start_line\": node.start_point[0] + 1,\r\n        \"end_line\": node.end_point[0] + 1,\r\n        \"text\": text(extractor, node, source_code),\r\n        \"children\": [],\r\n    }\r\n\r\n    body = find_child(\r\n        node,\r\n        \"block\",\r\n    )\r\n\r\n    if body:\r\n        result[\"children\"] = extract_scope(\r\n            extractor,\r\n            body,\r\n            source_code,\r\n        )\r\n\r\n    return result",
+      "children": [
+        {
+          "type": "assignment",
+          "start_line": 711,
+          "end_line": 717,
+          "text": "result = {\r\n        \"type\": \"while\",\r\n        \"start_line\": node.start_point[0] + 1,\r\n        \"end_line\": node.end_point[0] + 1,\r\n        \"text\": text(extractor, node, source_code),\r\n        \"children\": [],\r\n    }"
+        },
+        {
+          "type": "assignment",
+          "start_line": 719,
+          "end_line": 722,
+          "text": "body = find_child(\r\n        node,\r\n        \"block\",\r\n    )"
+        },
+        {
+          "type": "if",
+          "start_line": 724,
+          "end_line": 729,
+          "text": "if body:\r\n        result[\"children\"] = extract_scope(\r\n            extractor,\r\n            body,\r\n            source_code,\r\n        )",
+          "children": [
+            {
+              "type": "assignment",
+              "start_line": 725,
+              "end_line": 729,
+              "text": "result[\"children\"] = extract_scope(\r\n            extractor,\r\n            body,\r\n            source_code,\r\n        )"
+            }
+          ]
+        }
+      ],
+      "parameters": "(extractor, node, source_code)"
+    },
+    {
+      "type": "comment",
+      "start_line": 734,
+      "end_line": 734,
+      "text": "# ================================================================\r"
+    },
+    {
+      "type": "comment",
+      "start_line": 735,
+      "end_line": 735,
+      "text": "# TRY / EXCEPT / ELSE / FINALLY\r"
+    },
+    {
+      "type": "comment",
+      "start_line": 736,
+      "end_line": 736,
+      "text": "# ================================================================\r"
+    },
+    {
+      "type": "function",
+      "name": "extract_try",
+      "start_line": 739,
+      "end_line": 831,
+      "text": "def extract_try(extractor, node, source_code):\r\n    \"\"\"\r\n    Handles:\r\n\r\n        try:\r\n            ...\r\n\r\n        except ValueError:\r\n            ...\r\n\r\n        except Exception as e:\r\n            ...\r\n\r\n        else:\r\n            ...\r\n\r\n        finally:\r\n            ...\r\n\r\n    Also handles except* clauses using the same generic\r\n    exception-clause extraction.\r\n    \"\"\"\r\n\r\n    result = {\r\n        \"type\": \"try\",\r\n        \"start_line\": node.start_point[0] + 1,\r\n        \"end_line\": node.end_point[0] + 1,\r\n        \"text\": text(extractor, node, source_code),\r\n        \"children\": [],\r\n    }\r\n\r\n    for child in node.children:\r\n\r\n        # --------------------------------------------------------\r\n        # Main try body\r\n        # --------------------------------------------------------\r\n\r\n        if child.type == \"block\":\r\n\r\n            result[\"children\"].extend(\r\n                extract_scope(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )\r\n\r\n        # --------------------------------------------------------\r\n        # except / except*\r\n        # --------------------------------------------------------\r\n\r\n        elif child.type in {\r\n            \"except_clause\",\r\n            \"except_group_clause\",\r\n        }:\r\n\r\n            result[\"children\"].append(\r\n                extract_except(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )\r\n\r\n        # --------------------------------------------------------\r\n        # else attached to try\r\n        # --------------------------------------------------------\r\n\r\n        elif child.type == \"else_clause\":\r\n\r\n            result[\"children\"].append(\r\n                extract_try_else(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )\r\n\r\n        # --------------------------------------------------------\r\n        # finally\r\n        # --------------------------------------------------------\r\n\r\n        elif child.type == \"finally_clause\":\r\n\r\n            result[\"children\"].append(\r\n                extract_finally(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )\r\n\r\n    return result",
+      "children": [
+        {
+          "type": "assignment",
+          "start_line": 762,
+          "end_line": 768,
+          "text": "result = {\r\n        \"type\": \"try\",\r\n        \"start_line\": node.start_point[0] + 1,\r\n        \"end_line\": node.end_point[0] + 1,\r\n        \"text\": text(extractor, node, source_code),\r\n        \"children\": [],\r\n    }"
+        },
+        {
+          "type": "for",
+          "start_line": 770,
+          "end_line": 829,
+          "text": "for child in node.children:\r\n\r\n        # --------------------------------------------------------\r\n        # Main try body\r\n        # --------------------------------------------------------\r\n\r\n        if child.type == \"block\":\r\n\r\n            result[\"children\"].extend(\r\n                extract_scope(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )\r\n\r\n        # --------------------------------------------------------\r\n        # except / except*\r\n        # --------------------------------------------------------\r\n\r\n        elif child.type in {\r\n            \"except_clause\",\r\n            \"except_group_clause\",\r\n        }:\r\n\r\n            result[\"children\"].append(\r\n                extract_except(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )\r\n\r\n        # --------------------------------------------------------\r\n        # else attached to try\r\n        # --------------------------------------------------------\r\n\r\n        elif child.type == \"else_clause\":\r\n\r\n            result[\"children\"].append(\r\n                extract_try_else(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )\r\n\r\n        # --------------------------------------------------------\r\n        # finally\r\n        # --------------------------------------------------------\r\n\r\n        elif child.type == \"finally_clause\":\r\n\r\n            result[\"children\"].append(\r\n                extract_finally(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )",
+          "children": [
+            {
+              "type": "if",
+              "start_line": 776,
+              "end_line": 829,
+              "text": "if child.type == \"block\":\r\n\r\n            result[\"children\"].extend(\r\n                extract_scope(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )\r\n\r\n        # --------------------------------------------------------\r\n        # except / except*\r\n        # --------------------------------------------------------\r\n\r\n        elif child.type in {\r\n            \"except_clause\",\r\n            \"except_group_clause\",\r\n        }:\r\n\r\n            result[\"children\"].append(\r\n                extract_except(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )\r\n\r\n        # --------------------------------------------------------\r\n        # else attached to try\r\n        # --------------------------------------------------------\r\n\r\n        elif child.type == \"else_clause\":\r\n\r\n            result[\"children\"].append(\r\n                extract_try_else(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )\r\n\r\n        # --------------------------------------------------------\r\n        # finally\r\n        # --------------------------------------------------------\r\n\r\n        elif child.type == \"finally_clause\":\r\n\r\n            result[\"children\"].append(\r\n                extract_finally(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )",
+              "children": [
+                {
+                  "type": "elif",
+                  "start_line": 790,
+                  "end_line": 801,
+                  "text": "elif child.type in {\r\n            \"except_clause\",\r\n            \"except_group_clause\",\r\n        }:\r\n\r\n            result[\"children\"].append(\r\n                extract_except(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )",
+                  "children": []
+                },
+                {
+                  "type": "elif",
+                  "start_line": 807,
+                  "end_line": 815,
+                  "text": "elif child.type == \"else_clause\":\r\n\r\n            result[\"children\"].append(\r\n                extract_try_else(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )",
+                  "children": []
+                },
+                {
+                  "type": "elif",
+                  "start_line": 821,
+                  "end_line": 829,
+                  "text": "elif child.type == \"finally_clause\":\r\n\r\n            result[\"children\"].append(\r\n                extract_finally(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )",
+                  "children": []
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "parameters": "(extractor, node, source_code)"
+    },
+    {
+      "type": "function",
+      "name": "extract_except",
+      "start_line": 834,
+      "end_line": 885,
+      "text": "def extract_except(extractor, node, source_code):\r\n    result = {\r\n        \"type\": \"except\",\r\n        \"start_line\": node.start_point[0] + 1,\r\n        \"end_line\": node.end_point[0] + 1,\r\n        \"text\": text(extractor, node, source_code),\r\n        \"children\": [],\r\n    }\r\n\r\n    # ------------------------------------------------------------\r\n    # Extract exception type / name where available\r\n    # ------------------------------------------------------------\r\n\r\n    exception_types = []\r\n\r\n    for child in node.children:\r\n\r\n        if child.type in {\r\n            \"identifier\",\r\n            \"attribute\",\r\n            \"tuple\",\r\n            \"list\",\r\n            \"as_pattern\",\r\n        }:\r\n            exception_types.append(\r\n                text(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )\r\n\r\n    if exception_types:\r\n        result[\"exception\"] = exception_types\r\n\r\n    # ------------------------------------------------------------\r\n    # Extract except body\r\n    # ------------------------------------------------------------\r\n\r\n    body = find_child(\r\n        node,\r\n        \"block\",\r\n    )\r\n\r\n    if body:\r\n        result[\"children\"] = extract_scope(\r\n            extractor,\r\n            body,\r\n            source_code,\r\n        )\r\n\r\n    return result",
+      "children": [
+        {
+          "type": "assignment",
+          "start_line": 835,
+          "end_line": 841,
+          "text": "result = {\r\n        \"type\": \"except\",\r\n        \"start_line\": node.start_point[0] + 1,\r\n        \"end_line\": node.end_point[0] + 1,\r\n        \"text\": text(extractor, node, source_code),\r\n        \"children\": [],\r\n    }"
+        },
+        {
+          "type": "comment",
+          "start_line": 843,
+          "end_line": 843,
+          "text": "# ------------------------------------------------------------\r"
+        },
+        {
+          "type": "comment",
+          "start_line": 844,
+          "end_line": 844,
+          "text": "# Extract exception type / name where available\r"
+        },
+        {
+          "type": "comment",
+          "start_line": 845,
+          "end_line": 845,
+          "text": "# ------------------------------------------------------------\r"
+        },
+        {
+          "type": "assignment",
+          "start_line": 847,
+          "end_line": 847,
+          "text": "exception_types = []"
+        },
+        {
+          "type": "for",
+          "start_line": 849,
+          "end_line": 864,
+          "text": "for child in node.children:\r\n\r\n        if child.type in {\r\n            \"identifier\",\r\n            \"attribute\",\r\n            \"tuple\",\r\n            \"list\",\r\n            \"as_pattern\",\r\n        }:\r\n            exception_types.append(\r\n                text(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )",
+          "children": [
+            {
+              "type": "if",
+              "start_line": 851,
+              "end_line": 864,
+              "text": "if child.type in {\r\n            \"identifier\",\r\n            \"attribute\",\r\n            \"tuple\",\r\n            \"list\",\r\n            \"as_pattern\",\r\n        }:\r\n            exception_types.append(\r\n                text(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )",
+              "children": []
+            }
+          ]
+        },
+        {
+          "type": "if",
+          "start_line": 866,
+          "end_line": 867,
+          "text": "if exception_types:\r\n        result[\"exception\"] = exception_types",
+          "children": [
+            {
+              "type": "assignment",
+              "start_line": 867,
+              "end_line": 867,
+              "text": "result[\"exception\"] = exception_types"
+            }
+          ]
+        },
+        {
+          "type": "comment",
+          "start_line": 869,
+          "end_line": 869,
+          "text": "# ------------------------------------------------------------\r"
+        },
+        {
+          "type": "comment",
+          "start_line": 870,
+          "end_line": 870,
+          "text": "# Extract except body\r"
+        },
+        {
+          "type": "comment",
+          "start_line": 871,
+          "end_line": 871,
+          "text": "# ------------------------------------------------------------\r"
+        },
+        {
+          "type": "assignment",
+          "start_line": 873,
+          "end_line": 876,
+          "text": "body = find_child(\r\n        node,\r\n        \"block\",\r\n    )"
+        },
+        {
+          "type": "if",
+          "start_line": 878,
+          "end_line": 883,
+          "text": "if body:\r\n        result[\"children\"] = extract_scope(\r\n            extractor,\r\n            body,\r\n            source_code,\r\n        )",
+          "children": [
+            {
+              "type": "assignment",
+              "start_line": 879,
+              "end_line": 883,
+              "text": "result[\"children\"] = extract_scope(\r\n            extractor,\r\n            body,\r\n            source_code,\r\n        )"
+            }
+          ]
+        }
+      ],
+      "parameters": "(extractor, node, source_code)"
+    },
+    {
+      "type": "function",
+      "name": "extract_try_else",
+      "start_line": 888,
+      "end_line": 910,
+      "text": "def extract_try_else(extractor, node, source_code):\r\n    result = {\r\n        \"type\": \"else\",\r\n        \"context\": \"try\",\r\n        \"start_line\": node.start_point[0] + 1,\r\n        \"end_line\": node.end_point[0] + 1,\r\n        \"text\": text(extractor, node, source_code),\r\n        \"children\": [],\r\n    }\r\n\r\n    body = find_child(\r\n        node,\r\n        \"block\",\r\n    )\r\n\r\n    if body:\r\n        result[\"children\"] = extract_scope(\r\n            extractor,\r\n            body,\r\n            source_code,\r\n        )\r\n\r\n    return result",
+      "children": [
+        {
+          "type": "assignment",
+          "start_line": 889,
+          "end_line": 896,
+          "text": "result = {\r\n        \"type\": \"else\",\r\n        \"context\": \"try\",\r\n        \"start_line\": node.start_point[0] + 1,\r\n        \"end_line\": node.end_point[0] + 1,\r\n        \"text\": text(extractor, node, source_code),\r\n        \"children\": [],\r\n    }"
+        },
+        {
+          "type": "assignment",
+          "start_line": 898,
+          "end_line": 901,
+          "text": "body = find_child(\r\n        node,\r\n        \"block\",\r\n    )"
+        },
+        {
+          "type": "if",
+          "start_line": 903,
+          "end_line": 908,
+          "text": "if body:\r\n        result[\"children\"] = extract_scope(\r\n            extractor,\r\n            body,\r\n            source_code,\r\n        )",
+          "children": [
+            {
+              "type": "assignment",
+              "start_line": 904,
+              "end_line": 908,
+              "text": "result[\"children\"] = extract_scope(\r\n            extractor,\r\n            body,\r\n            source_code,\r\n        )"
+            }
+          ]
+        }
+      ],
+      "parameters": "(extractor, node, source_code)"
+    },
+    {
+      "type": "function",
+      "name": "extract_finally",
+      "start_line": 913,
+      "end_line": 934,
+      "text": "def extract_finally(extractor, node, source_code):\r\n    result = {\r\n        \"type\": \"finally\",\r\n        \"start_line\": node.start_point[0] + 1,\r\n        \"end_line\": node.end_point[0] + 1,\r\n        \"text\": text(extractor, node, source_code),\r\n        \"children\": [],\r\n    }\r\n\r\n    body = find_child(\r\n        node,\r\n        \"block\",\r\n    )\r\n\r\n    if body:\r\n        result[\"children\"] = extract_scope(\r\n            extractor,\r\n            body,\r\n            source_code,\r\n        )\r\n\r\n    return result",
+      "children": [
+        {
+          "type": "assignment",
+          "start_line": 914,
+          "end_line": 920,
+          "text": "result = {\r\n        \"type\": \"finally\",\r\n        \"start_line\": node.start_point[0] + 1,\r\n        \"end_line\": node.end_point[0] + 1,\r\n        \"text\": text(extractor, node, source_code),\r\n        \"children\": [],\r\n    }"
+        },
+        {
+          "type": "assignment",
+          "start_line": 922,
+          "end_line": 925,
+          "text": "body = find_child(\r\n        node,\r\n        \"block\",\r\n    )"
+        },
+        {
+          "type": "if",
+          "start_line": 927,
+          "end_line": 932,
+          "text": "if body:\r\n        result[\"children\"] = extract_scope(\r\n            extractor,\r\n            body,\r\n            source_code,\r\n        )",
+          "children": [
+            {
+              "type": "assignment",
+              "start_line": 928,
+              "end_line": 932,
+              "text": "result[\"children\"] = extract_scope(\r\n            extractor,\r\n            body,\r\n            source_code,\r\n        )"
+            }
+          ]
+        }
+      ],
+      "parameters": "(extractor, node, source_code)"
+    },
+    {
+      "type": "comment",
+      "start_line": 937,
+      "end_line": 937,
+      "text": "# ================================================================\r"
+    },
+    {
+      "type": "comment",
+      "start_line": 938,
+      "end_line": 938,
+      "text": "# WITH\r"
+    },
+    {
+      "type": "comment",
+      "start_line": 939,
+      "end_line": 939,
+      "text": "# ================================================================\r"
+    },
+    {
+      "type": "function",
+      "name": "extract_with",
+      "start_line": 942,
+      "end_line": 1010,
+      "text": "def extract_with(extractor, node, source_code):\r\n    \"\"\"\r\n    Handles:\r\n\r\n        with open(\"file.txt\") as f:\r\n            ...\r\n\r\n    and:\r\n\r\n        with A() as a, B() as b:\r\n            ...\r\n\r\n    and async with.\r\n    \"\"\"\r\n\r\n    result = {\r\n        \"type\": \"with\",\r\n        \"start_line\": node.start_point[0] + 1,\r\n        \"end_line\": node.end_point[0] + 1,\r\n        \"text\": text(extractor, node, source_code),\r\n        \"children\": [],\r\n    }\r\n\r\n    if node.type == \"async_with_statement\":\r\n        result[\"async\"] = True\r\n\r\n    # ------------------------------------------------------------\r\n    # Extract with clauses\r\n    # ------------------------------------------------------------\r\n\r\n    items = []\r\n\r\n    for child in node.children:\r\n\r\n        if child.type in {\r\n            \"with_clause\",\r\n            \"with_item\",\r\n        }:\r\n            items.append({\r\n                \"type\": \"with_item\",\r\n                \"text\": text(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                ),\r\n                \"start_line\": child.start_point[0] + 1,\r\n                \"end_line\": child.end_point[0] + 1,\r\n            })\r\n\r\n    if items:\r\n        result[\"items\"] = items\r\n\r\n    # ------------------------------------------------------------\r\n    # Extract body\r\n    # ------------------------------------------------------------\r\n\r\n    body = find_child(\r\n        node,\r\n        \"block\",\r\n    )\r\n\r\n    if body:\r\n        result[\"children\"] = extract_scope(\r\n            extractor,\r\n            body,\r\n            source_code,\r\n        )\r\n\r\n    return result",
+      "children": [
+        {
+          "type": "assignment",
+          "start_line": 957,
+          "end_line": 963,
+          "text": "result = {\r\n        \"type\": \"with\",\r\n        \"start_line\": node.start_point[0] + 1,\r\n        \"end_line\": node.end_point[0] + 1,\r\n        \"text\": text(extractor, node, source_code),\r\n        \"children\": [],\r\n    }"
+        },
+        {
+          "type": "if",
+          "start_line": 965,
+          "end_line": 966,
+          "text": "if node.type == \"async_with_statement\":\r\n        result[\"async\"] = True",
+          "children": [
+            {
+              "type": "assignment",
+              "start_line": 966,
+              "end_line": 966,
+              "text": "result[\"async\"] = True"
+            }
+          ]
+        },
+        {
+          "type": "comment",
+          "start_line": 968,
+          "end_line": 968,
+          "text": "# ------------------------------------------------------------\r"
+        },
+        {
+          "type": "comment",
+          "start_line": 969,
+          "end_line": 969,
+          "text": "# Extract with clauses\r"
+        },
+        {
+          "type": "comment",
+          "start_line": 970,
+          "end_line": 970,
+          "text": "# ------------------------------------------------------------\r"
+        },
+        {
+          "type": "assignment",
+          "start_line": 972,
+          "end_line": 972,
+          "text": "items = []"
+        },
+        {
+          "type": "for",
+          "start_line": 974,
+          "end_line": 989,
+          "text": "for child in node.children:\r\n\r\n        if child.type in {\r\n            \"with_clause\",\r\n            \"with_item\",\r\n        }:\r\n            items.append({\r\n                \"type\": \"with_item\",\r\n                \"text\": text(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                ),\r\n                \"start_line\": child.start_point[0] + 1,\r\n                \"end_line\": child.end_point[0] + 1,\r\n            })",
+          "children": [
+            {
+              "type": "if",
+              "start_line": 976,
+              "end_line": 989,
+              "text": "if child.type in {\r\n            \"with_clause\",\r\n            \"with_item\",\r\n        }:\r\n            items.append({\r\n                \"type\": \"with_item\",\r\n                \"text\": text(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                ),\r\n                \"start_line\": child.start_point[0] + 1,\r\n                \"end_line\": child.end_point[0] + 1,\r\n            })",
+              "children": []
+            }
+          ]
+        },
+        {
+          "type": "if",
+          "start_line": 991,
+          "end_line": 992,
+          "text": "if items:\r\n        result[\"items\"] = items",
+          "children": [
+            {
+              "type": "assignment",
+              "start_line": 992,
+              "end_line": 992,
+              "text": "result[\"items\"] = items"
+            }
+          ]
+        },
+        {
+          "type": "comment",
+          "start_line": 994,
+          "end_line": 994,
+          "text": "# ------------------------------------------------------------\r"
+        },
+        {
+          "type": "comment",
+          "start_line": 995,
+          "end_line": 995,
+          "text": "# Extract body\r"
+        },
+        {
+          "type": "comment",
+          "start_line": 996,
+          "end_line": 996,
+          "text": "# ------------------------------------------------------------\r"
+        },
+        {
+          "type": "assignment",
+          "start_line": 998,
+          "end_line": 1001,
+          "text": "body = find_child(\r\n        node,\r\n        \"block\",\r\n    )"
+        },
+        {
+          "type": "if",
+          "start_line": 1003,
+          "end_line": 1008,
+          "text": "if body:\r\n        result[\"children\"] = extract_scope(\r\n            extractor,\r\n            body,\r\n            source_code,\r\n        )",
+          "children": [
+            {
+              "type": "assignment",
+              "start_line": 1004,
+              "end_line": 1008,
+              "text": "result[\"children\"] = extract_scope(\r\n            extractor,\r\n            body,\r\n            source_code,\r\n        )"
+            }
+          ]
+        }
+      ],
+      "parameters": "(extractor, node, source_code)"
+    },
+    {
+      "type": "comment",
+      "start_line": 1013,
+      "end_line": 1013,
+      "text": "# ================================================================\r"
+    },
+    {
+      "type": "comment",
+      "start_line": 1014,
+      "end_line": 1014,
+      "text": "# MATCH / CASE\r"
+    },
+    {
+      "type": "comment",
+      "start_line": 1015,
+      "end_line": 1015,
+      "text": "# ================================================================\r"
+    },
+    {
+      "type": "function",
+      "name": "extract_match",
+      "start_line": 1018,
+      "end_line": 1060,
+      "text": "def extract_match(extractor, node, source_code):\r\n    \"\"\"\r\n    Handles Python 3.10+:\r\n\r\n        match value:\r\n            case 1:\r\n                ...\r\n\r\n            case _:\r\n                ...\r\n    \"\"\"\r\n\r\n    result = {\r\n        \"type\": \"match\",\r\n        \"start_line\": node.start_point[0] + 1,\r\n        \"end_line\": node.end_point[0] + 1,\r\n        \"text\": text(extractor, node, source_code),\r\n        \"children\": [],\r\n    }\r\n\r\n    for child in node.children:\r\n\r\n        if child.type == \"case_clause\":\r\n\r\n            result[\"children\"].append(\r\n                extract_case(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )\r\n\r\n        elif child.type == \"block\":\r\n\r\n            result[\"children\"].extend(\r\n                extract_scope(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )\r\n\r\n    return result",
+      "children": [
+        {
+          "type": "assignment",
+          "start_line": 1030,
+          "end_line": 1036,
+          "text": "result = {\r\n        \"type\": \"match\",\r\n        \"start_line\": node.start_point[0] + 1,\r\n        \"end_line\": node.end_point[0] + 1,\r\n        \"text\": text(extractor, node, source_code),\r\n        \"children\": [],\r\n    }"
+        },
+        {
+          "type": "for",
+          "start_line": 1038,
+          "end_line": 1058,
+          "text": "for child in node.children:\r\n\r\n        if child.type == \"case_clause\":\r\n\r\n            result[\"children\"].append(\r\n                extract_case(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )\r\n\r\n        elif child.type == \"block\":\r\n\r\n            result[\"children\"].extend(\r\n                extract_scope(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )",
+          "children": [
+            {
+              "type": "if",
+              "start_line": 1040,
+              "end_line": 1058,
+              "text": "if child.type == \"case_clause\":\r\n\r\n            result[\"children\"].append(\r\n                extract_case(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )\r\n\r\n        elif child.type == \"block\":\r\n\r\n            result[\"children\"].extend(\r\n                extract_scope(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )",
+              "children": [
+                {
+                  "type": "elif",
+                  "start_line": 1050,
+                  "end_line": 1058,
+                  "text": "elif child.type == \"block\":\r\n\r\n            result[\"children\"].extend(\r\n                extract_scope(\r\n                    extractor,\r\n                    child,\r\n                    source_code,\r\n                )\r\n            )",
+                  "children": []
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "parameters": "(extractor, node, source_code)"
+    },
+    {
+      "type": "function",
+      "name": "extract_case",
+      "start_line": 1063,
+      "end_line": 1084,
+      "text": "def extract_case(extractor, node, source_code):\r\n    result = {\r\n        \"type\": \"case\",\r\n        \"start_line\": node.start_point[0] + 1,\r\n        \"end_line\": node.end_point[0] + 1,\r\n        \"text\": text(extractor, node, source_code),\r\n        \"children\": [],\r\n    }\r\n\r\n    body = find_child(\r\n        node,\r\n        \"block\",\r\n    )\r\n\r\n    if body:\r\n        result[\"children\"] = extract_scope(\r\n            extractor,\r\n            body,\r\n            source_code,\r\n        )\r\n\r\n    return result",
+      "children": [
+        {
+          "type": "assignment",
+          "start_line": 1064,
+          "end_line": 1070,
+          "text": "result = {\r\n        \"type\": \"case\",\r\n        \"start_line\": node.start_point[0] + 1,\r\n        \"end_line\": node.end_point[0] + 1,\r\n        \"text\": text(extractor, node, source_code),\r\n        \"children\": [],\r\n    }"
+        },
+        {
+          "type": "assignment",
+          "start_line": 1072,
+          "end_line": 1075,
+          "text": "body = find_child(\r\n        node,\r\n        \"block\",\r\n    )"
+        },
+        {
+          "type": "if",
+          "start_line": 1077,
+          "end_line": 1082,
+          "text": "if body:\r\n        result[\"children\"] = extract_scope(\r\n            extractor,\r\n            body,\r\n            source_code,\r\n        )",
+          "children": [
+            {
+              "type": "assignment",
+              "start_line": 1078,
+              "end_line": 1082,
+              "text": "result[\"children\"] = extract_scope(\r\n            extractor,\r\n            body,\r\n            source_code,\r\n        )"
+            }
+          ]
+        }
+      ],
+      "parameters": "(extractor, node, source_code)"
+    },
+    {
+      "type": "comment",
+      "start_line": 1087,
+      "end_line": 1087,
+      "text": "# ================================================================\r"
+    },
+    {
+      "type": "comment",
+      "start_line": 1088,
+      "end_line": 1088,
+      "text": "# HELPERS\r"
+    },
+    {
+      "type": "comment",
+      "start_line": 1089,
+      "end_line": 1089,
+      "text": "# ================================================================\r"
+    },
+    {
+      "type": "function",
+      "name": "find_child",
+      "start_line": 1092,
+      "end_line": 1103,
+      "text": "def find_child(node, child_type):\r\n    \"\"\"\r\n    Find the first direct child with the requested Tree-sitter\r\n    node type.\r\n    \"\"\"\r\n\r\n    for child in node.children:\r\n\r\n        if child.type == child_type:\r\n            return child\r\n\r\n    return None",
+      "children": [
+        {
+          "type": "for",
+          "start_line": 1098,
+          "end_line": 1101,
+          "text": "for child in node.children:\r\n\r\n        if child.type == child_type:\r\n            return child",
+          "children": [
+            {
+              "type": "if",
+              "start_line": 1100,
+              "end_line": 1101,
+              "text": "if child.type == child_type:\r\n            return child",
+              "children": []
+            }
+          ]
+        }
+      ],
+      "parameters": "(node, child_type)"
+    },
+    {
+      "type": "function",
+      "name": "text",
+      "start_line": 1106,
+      "end_line": 1119,
+      "text": "def text(extractor, node, source_code):\r\n    \"\"\"\r\n    Return the exact source text represented by a Tree-sitter node.\r\n\r\n    The extractor argument is intentionally accepted so this helper\r\n    has the same calling convention as the other extraction functions.\r\n    \"\"\"\r\n\r\n    return source_code[\r\n        node.start_byte:node.end_byte\r\n    ].decode(\r\n        \"utf-8\",\r\n        errors=\"replace\",\r\n    )",
+      "children": [],
+      "parameters": "(extractor, node, source_code)"
+    }
+  ]
+}
