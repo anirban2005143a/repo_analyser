@@ -1,6 +1,7 @@
 from tree_sitter import Parser
 from tree_sitter_language_pack import get_language
 from file_parsing.extractors.BaseParser import BaseParser
+from file_parsing.extractors.type_mapping.python_type_mapping import PYTHON_TYPE_MAPPING
 
 
 class PythonParser(BaseParser):
@@ -27,7 +28,7 @@ class PythonParser(BaseParser):
         tree = self.parser.parse(source_code)
 
         return {
-            "type": "file",
+            "type": map_node_type("module"),
             "children": extract_scope(
                 self,
                 tree.root_node,
@@ -66,7 +67,7 @@ def extract_scope(extractor, node, source_code):
 
         if child.type == "comment":
             children.append({
-                "type": "comment",
+                "type": map_node_type(child.type),
                 "start_line": child.start_point[0] + 1,
                 "end_line": child.end_point[0] + 1,
                 "text": text(extractor, child, source_code),
@@ -273,7 +274,7 @@ def extract_scope(extractor, node, source_code):
 
 def extract_import(extractor, node, source_code):
     return {
-        "type": "import",
+        "type": map_node_type(node.type),
         "start_line": node.start_point[0] + 1,
         "end_line": node.end_point[0] + 1,
         "text": text(extractor, node, source_code),
@@ -287,7 +288,7 @@ def extract_import(extractor, node, source_code):
 
 def extract_assignment(extractor, node, source_code):
     return {
-        "type": "assignment",
+        "type": map_node_type(node.type),
         "start_line": node.start_point[0] + 1,
         "end_line": node.end_point[0] + 1,
         "text": text(extractor, node, source_code),
@@ -312,7 +313,7 @@ def extract_class(extractor, node, source_code):
             break
 
     result = {
-        "type": "class",
+        "type": map_node_type(node.type),
         "name": name,
         "start_line": node.start_point[0] + 1,
         "end_line": node.end_point[0] + 1,
@@ -382,7 +383,7 @@ def extract_function(extractor, node, source_code):
             break
 
     result = {
-        "type": "function",
+        "type": map_node_type(node.type),
         "name": name,
         "start_line": node.start_point[0] + 1,
         "end_line": node.end_point[0] + 1,
@@ -480,7 +481,7 @@ def extract_decorated_definition(
         if child.type == "decorator":
 
             decorators.append({
-                "type": "decorator",
+                "type": map_node_type(child.type),
                 "text": text(
                     extractor,
                     child,
@@ -547,7 +548,7 @@ def extract_decorated_definition(
 
 def extract_if(extractor, node, source_code):
     result = {
-        "type": "if",
+        "type": map_node_type(node.type),
         "start_line": node.start_point[0] + 1,
         "end_line": node.end_point[0] + 1,
         "text": text(extractor, node, source_code),
@@ -603,7 +604,7 @@ def extract_if(extractor, node, source_code):
 
 def extract_elif(extractor, node, source_code):
     result = {
-        "type": "elif",
+        "type": map_node_type(node.type),
         "start_line": node.start_point[0] + 1,
         "end_line": node.end_point[0] + 1,
         "text": text(extractor, node, source_code),
@@ -627,7 +628,7 @@ def extract_elif(extractor, node, source_code):
 
 def extract_else(extractor, node, source_code):
     result = {
-        "type": "else",
+        "type": map_node_type(node.type),
         "start_line": node.start_point[0] + 1,
         "end_line": node.end_point[0] + 1,
         "text": text(extractor, node, source_code),
@@ -656,7 +657,7 @@ def extract_else(extractor, node, source_code):
 
 def extract_for(extractor, node, source_code):
     result = {
-        "type": "for",
+        "type": map_node_type(node.type),
         "start_line": node.start_point[0] + 1,
         "end_line": node.end_point[0] + 1,
         "text": text(extractor, node, source_code),
@@ -688,7 +689,7 @@ def extract_for(extractor, node, source_code):
 
 def extract_while(extractor, node, source_code):
     result = {
-        "type": "while",
+        "type": map_node_type(node.type),
         "start_line": node.start_point[0] + 1,
         "end_line": node.end_point[0] + 1,
         "text": text(extractor, node, source_code),
@@ -739,7 +740,7 @@ def extract_try(extractor, node, source_code):
     """
 
     result = {
-        "type": "try",
+        "type": map_node_type(node.type),
         "start_line": node.start_point[0] + 1,
         "end_line": node.end_point[0] + 1,
         "text": text(extractor, node, source_code),
@@ -812,7 +813,7 @@ def extract_try(extractor, node, source_code):
 
 def extract_except(extractor, node, source_code):
     result = {
-        "type": "except",
+        "type": map_node_type(node.type),
         "start_line": node.start_point[0] + 1,
         "end_line": node.end_point[0] + 1,
         "text": text(extractor, node, source_code),
@@ -866,7 +867,7 @@ def extract_except(extractor, node, source_code):
 
 def extract_try_else(extractor, node, source_code):
     result = {
-        "type": "else",
+        "type": map_node_type(node.type),
         "context": "try",
         "start_line": node.start_point[0] + 1,
         "end_line": node.end_point[0] + 1,
@@ -891,7 +892,7 @@ def extract_try_else(extractor, node, source_code):
 
 def extract_finally(extractor, node, source_code):
     result = {
-        "type": "finally",
+        "type": map_node_type(node.type),
         "start_line": node.start_point[0] + 1,
         "end_line": node.end_point[0] + 1,
         "text": text(extractor, node, source_code),
@@ -934,7 +935,7 @@ def extract_with(extractor, node, source_code):
     """
 
     result = {
-        "type": "with",
+        "type": map_node_type(node.type),
         "start_line": node.start_point[0] + 1,
         "end_line": node.end_point[0] + 1,
         "text": text(extractor, node, source_code),
@@ -957,7 +958,7 @@ def extract_with(extractor, node, source_code):
             "with_item",
         }:
             items.append({
-                "type": "with_item",
+                "type": map_node_type(child.type),
                 "text": text(
                     extractor,
                     child,
@@ -1007,7 +1008,7 @@ def extract_match(extractor, node, source_code):
     """
 
     result = {
-        "type": "match",
+        "type": map_node_type(node.type),
         "start_line": node.start_point[0] + 1,
         "end_line": node.end_point[0] + 1,
         "text": text(extractor, node, source_code),
@@ -1041,7 +1042,7 @@ def extract_match(extractor, node, source_code):
 
 def extract_case(extractor, node, source_code):
     result = {
-        "type": "case",
+        "type": map_node_type(node.type),
         "start_line": node.start_point[0] + 1,
         "end_line": node.end_point[0] + 1,
         "text": text(extractor, node, source_code),
@@ -1066,6 +1067,14 @@ def extract_case(extractor, node, source_code):
 # ================================================================
 # HELPERS
 # ================================================================
+
+
+def map_node_type(node_type):
+    """
+    Return the canonical semantic type for a Python Tree-sitter node.
+    """
+
+    return PYTHON_TYPE_MAPPING.get(node_type, node_type)
 
 
 def find_child(node, child_type):
